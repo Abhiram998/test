@@ -1,0 +1,36 @@
+Add an automatic backup + auto-restore system to this React + Vite + TypeScript project. Goal: when the web app crashes or reloads, it should automatically restore the most recent local snapshot so no vehicle data is lost.
+
+Requirements:
+1. Create file `src/utils/persistence.ts` with TypeScript exports:
+   - `type VehicleRecord = { plate: string; zone: string; timeIn: string; timeOut?: string | null }`
+   - `appendEvent(record: VehicleRecord): Promise<void>` — append a single event to IndexedDB store "events" (append-only).
+   - `readAllEvents(): Promise<{id:string,createdAt:string,record:VehicleRecord}[]>` — read events sorted by time.
+   - `rebuildStateFromEvents(): Promise<VehicleRecord[]>` — rebuild current vehicle list from events (last event per plate wins).
+   - `saveLatestSnapshot(payload: {meta:any; data:VehicleRecord[]}): Promise<void>` — save compact snapshot under id "latest" in object store "backups" and also save a timestamped copy like `snap-<ts>`.
+   - `loadLatestSnapshotPayload(): Promise<{meta:any; data:VehicleRecord[]} | null>` — return payload or null.
+   - Use single DB name (e.g. `"nilakkal-police-events-db"`), stores: `"events"` and `"backups"`.
+
+2. Modify `src/App.tsx` (or top-level state manager):
+   - On mount `useEffect`, try `loadLatestSnapshotPayload()`:
+     • If a valid snapshot exists, automatically apply it to app state (replace current parking log).
+     • If not, call `rebuildStateFromEvents()` and apply result.
+     • Before applying auto-restore, save current live state as a `pre-restore-<ts>` snapshot in backups for rollback safety.
+     • Validate payload contains `data` array and each item has `plate`, `zone`, `timeIn` before applying.
+   - Add a periodic checkpoint `setInterval` (every 3–5 minutes) that calls `saveLatestSnapshot(makeSnapshotFromState(parkingLog))`.
+   - Add `beforeunload` handler to save a final `saveLatestSnapshot()` synchronously (best-effort).
+   - Ensure `appendEvent()` is called whenever a vehicle enters or leaves (arrivals/departures).
+
+3. Constraints & behavior:
+   - Snapshots must be compact and only include plate, zone, timeIn, timeOut.
+   - Do NOT perform automatic deletion of backups; deletion only by user via admin UI.
+   - Keep code minimal, well-typed, and documented with brief comments.
+   - Use browser IndexedDB directly (no external libs).
+   - Provide the full `persistence.ts` code and the exact code changes (diff/snippet) to `App.tsx`.
+
+Acceptance tests:
+ - Save several events, reload page, app auto-restores latest snapshot and displays correct parking log.
+ - If no snapshot exists, state rebuilds from event log.
+ - Periodic snapshots appear in backups store and "latest" is updated.
+ - beforeunload attempts to save a final snapshot.
+
+Return the full `persistence.ts` file content and the exact `App.tsx` `useEffect` + interval + beforeunload snippets to paste into the project.

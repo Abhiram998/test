@@ -1,0 +1,50 @@
+You are an expert frontend engineer. Modify the Chart.js bar chart in this React + TypeScript + Vite project so the chart's visual Y-axis is capped at 100%, while tooltips continue to show the true underlying percentage (and flag values >100% as "OVER 100%").
+
+Requirements:
+1. Locate the Chart component (likely under src/components or src/pages). Edit the file that creates the Chart.js chart instance or <Chart> options and datasets.
+2. Make only the following behavior changes (do not change dataset values except for visual clamping option described below):
+   - Option A (preferred): Set the y-axis `max` to `100` so the axis top is always 100%:
+     ```js
+     scales: {
+       y: {
+         beginAtZero: true,
+         max: 100,                // force top at 100%
+         ticks: { callback: (v) => `${v}%` }
+       }
+     }
+     ```
+     Keep the raw data arrays unchanged so bars above 100% render up to the top (100%), but tooltips show the real value.
+   - Update tooltip callback to display the actual underlying value and add a clear " — OVER 100%" marker when the value is >100%:
+     ```js
+     plugins: {
+       tooltip: {
+         callbacks: {
+           label: function(context) {
+             const val = context.raw ?? context.parsed?.y ?? 0;
+             const note = val > 100 ? " — OVER 100%" : "";
+             return `${context.dataset.label}: ${val}%${note}`;
+           }
+         }
+       }
+     }
+     ```
+   - Ensure existing tooltip formatting that shows `X / Y (Z%)` remains, or if you replaced it, adjust to still show full capacity info (e.g., `27 / 25 (108%)`) and include the OVER 100% note.
+
+3. Optional alternative (if you prefer bars themselves be visually clamped at 100%):
+   - Create a copy of your datasets for tooltips (`rawDatasets`) and pass clamped values (`Math.min(v, 100)`) into the chart's `data` so bars never draw beyond 100%, but tooltips read values from `rawDatasets`. Implement tooltip lookup by datasetIndex/dataIndex to show the raw value.
+
+4. Keep the rest of the chart behavior intact: spacing, groupings, colors, labels, and bar sizes must not be changed.
+
+5. TypeScript: if the Chart options are typed, keep types correct or add `as any` where necessary.
+
+Acceptance criteria:
+- Chart y-axis top must be exactly 100% visually.
+- Bars that have real values >100% must not extend the axis above 100% (Option A will show them clipped to top; Option B will clamp the bar height).
+- Tooltips must show the actual percentage value and clearly flag values >100% (e.g., append " — OVER 100%").
+- Run `npm run dev` and open the page: visually confirm the y-axis reads 0–100% and hovering a bar >100% shows its true percentage in the tooltip.
+
+Deliverables:
+- Exact code patch to the chart component file with the `max: 100` y-axis setting and updated tooltip callback.
+- If there are any conflicts with Chart.js version or TypeScript types, briefly explain the fix (1-2 sentences).
+
+Make the changes now and return the code diff or the complete updated file content.

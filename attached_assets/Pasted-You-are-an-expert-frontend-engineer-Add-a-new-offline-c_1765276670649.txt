@@ -1,0 +1,56 @@
+You are an expert frontend engineer. Add a new offline-capable "Police Backup" feature to this React + TypeScript + Vite project. Create one new file and make minimal integration edits. Follow these exact requirements:
+
+1) Create file: `src/components/PoliceBackup.tsx`
+   - Implement a React functional component (TypeScript) named `PoliceBackup`.
+   - Props:
+     - `getRecords: () => VehicleRecord[]` where `VehicleRecord = { plate: string; zone: string; timeIn: string; timeOut?: string | null }`
+     - `onRestore: (records: VehicleRecord[]) => void`
+     - `appName?: string` (default: "nilakkal-police")
+   - Features:
+     - Save a timestamped snapshot to IndexedDB (DB name `${appName}-backup-db`, store "backups"). Each record saved should include `meta` (app, version, createdAt, recordCount) and `data` array.
+     - List saved snapshots sorted newest first with `createdAt`, `recordCount`, and snapshot `id`.
+     - Allow manual actions for each snapshot:
+       - Export CSV (headers: plate, zone, timeIn, timeOut).
+       - Export JSON (the saved payload).
+       - Restore (call `onRestore(payload.data)` after a confirmation modal/popup).
+       - Delete (manual user confirmation required).
+     - Provide an Import JSON button to import a valid backup file and save it into IndexedDB as a snapshot (do not auto-apply).
+     - No automatic deletions. All deletes must be user-initiated and confirmed.
+     - Use standard browser `confirm()` for confirmations (OK).
+   - UX:
+     - Basic, accessible layout. Use Tailwind-style classes if Tailwind exists; otherwise simple inline styles. Avoid external UI libraries.
+     - Show loading/working state as text.
+     - Show friendly user messages on success/failure with `alert()` (simple).
+   - Validation:
+     - When importing or restoring, validate the payload contains an array at `payload.data` and that each item has `plate`, `zone`, and `timeIn`.
+     - If invalid, show an error alert.
+   - CSV generation: escape quotes, one header row, newline-separated rows.
+
+2) Integration instructions (modify these files):
+   - Add an example of how to use the component in `src/App.tsx` (or the main page):
+     - Add `import PoliceBackup from "./components/PoliceBackup";`
+     - Provide a `getRecords` implementation mapping your app's parking data into `VehicleRecord[]`.
+     - Provide a simple `onRestore` that replaces the app's parking log state (use a placeholder `setParkingLog` or a comment indicating where to integrate).
+     - Render `<PoliceBackup getRecords={getRecords} onRestore={onRestore} appName="nilakkal-police" />` inside the main UI (you may render it in a dev/admin area).
+   - Do not change other project behavior or routing.
+
+3) Testing & acceptance criteria:
+   - After adding, running `npm run dev` must build without TypeScript errors.
+   - Manually verify:
+     - Click "Save Snapshot": a snapshot appears in the list.
+     - Export CSV and JSON: files download and open correctly.
+     - Import JSON: saved as snapshot and appears in list.
+     - Restore: calls `onRestore` (for the example App.tsx usage, reflect restored data).
+     - Delete: snapshot removed after confirmation.
+   - IndexedDB store name must be `${appName}-backup-db` and object store `backups`.
+
+4) Extra:
+   - Keep the file self-contained and well-commented.
+   - Keep code size moderate and readable; include types for main structures.
+   - If Tailwind is not present, fall back to inline styles but keep classNames sensible.
+
+Deliverables:
+- New file `src/components/PoliceBackup.tsx`.
+- Small diff/changes to `src/App.tsx` showing how to integrate and test (no other file changes).
+
+If anything in the project structure conflicts, detect and explain succinctly what to modify and why. Provide the exact code for the new file and the exact snippet to add to `src/App.tsx`.

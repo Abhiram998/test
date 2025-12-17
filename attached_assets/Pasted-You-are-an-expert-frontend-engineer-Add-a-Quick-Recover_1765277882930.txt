@@ -1,0 +1,49 @@
+You are an expert frontend engineer. Add a "Quick Recovery" feature to this React + TypeScript + Vite project. Implement exactly what follows and produce the new file(s) and exact code snippets to insert.
+
+Goal: In the admin backup panel (PoliceBackup), add a **Quick Recovery** button next to the existing "Save Snapshot" button. When clicked it must load the latest local snapshot from IndexedDB, validate it, optionally save a pre-restore snapshot for rollback, call the app's `onRestore(records)` handler, and update the home screen (graphs, vacancy, occupancy) immediately.
+
+Requirements & behavior:
+1. UI:
+   - Add a button labeled **Quick Recovery** beside the Save Snapshot button in `src/components/PoliceBackup.tsx`. Use existing style conventions (Tailwind classes if used; fall back to simple inline styles if not).
+   - Confirm user action with `confirm("Quick Recovery will load the latest saved snapshot and replace current live data. Continue?")`.
+
+2. Data flow:
+   - Load latest snapshot payload from IndexedDB store `"backups"` in DB `<appName>-backup-db` (same DB used by existing backup code). If a convenience helper `loadLatestSnapshotPayload()` exists in `src/utils/persistence.ts`, use it; otherwise implement the loader inline.
+   - Validate payload: must be an object with `payload.data` array; if non-empty ensure the first item has `plate`, `zone`, and `timeIn`. If invalid, show an `alert()` and abort.
+   - Before applying restore, save the current live app state as a `pre-restore-<timestamp>` snapshot in the same backups store (for rollback safety).
+   - Then call the provided `onRestore(payload.data)` prop from `PoliceBackup` to apply the data to the app.
+
+3. App state update:
+   - Show exactly what the `onRestore` implementation must do in `src/App.tsx` (or the main state manager):
+     - Replace the current `parkingLog` (or equivalent) with restored records.
+     - Recompute and set `occupancy` = number of records with `timeOut == null`.
+     - Recompute and set `vacancy` = `max(TOTAL_CAPACITY - occupancy, 0)`; include where to configure TOTAL_CAPACITY.
+     - Recompute `chartData` (zone counts → labels + series) and update the chart state so the home screen graphs refresh.
+   - Provide the exact `useCallback` or function code for `onRestore(records)` to paste into `App.tsx`.
+
+4. Edge cases & UX:
+   - If no latest snapshot found, show `alert("No valid latest snapshot found.")`.
+   - After successful restore, show `alert("Quick Recovery applied — UI updated.")`.
+   - Do NOT delete backups automatically; deletion remains manual.
+   - Add console logs for success/failure to aid debugging.
+
+5. Deliverables:
+   - Full updated `src/components/PoliceBackup.tsx` file (or a patch showing only the new Quick Recovery button and its handler).
+   - Full `persistence` helper function `loadLatestSnapshotPayload()` if not already present.
+   - Exact snippet to add/update in `src/App.tsx` implementing `onRestore(records)` and example `getRecords()` usage.
+   - Short testing checklist showing how to verify Quick Recovery works:
+     • Save a snapshot, change UI state, click Quick Recovery → home screen should reflect snapshot (graphs, occupancy, vacancy).
+     • If no snapshot exists, Quick Recovery shows the "no valid" alert.
+     • Pre-restore snapshot is saved under id `pre-restore-<ts>`.
+
+6. Constraints:
+   - Use IndexedDB directly (no extra libraries).
+   - Keep code TypeScript-typed and commented.
+   - Keep the UI simple (no external modal libraries); browser `confirm()` and `alert()` are acceptable.
+   - Maintain existing project styles (Tailwind if used).
+
+Acceptance criteria:
+- After applying changes and running `npm run dev`, clicking Quick Recovery must load latest snapshot and update the home screen graphs, vacancy, and occupancy immediately.
+- Provide the exact code to paste; do not leave placeholders like "implement this".
+
+If anything in the project structure conflicts, detect it and explain succinctly what to change and why. Provide only the code/files/patches and the short test checklist — no additional unrelated suggestions.
