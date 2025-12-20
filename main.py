@@ -204,25 +204,25 @@ def get_reports(date: str, zone: str = "ALL"):
 
 # ================== FRONTEND (SPA) ==================
 BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = BASE_DIR / "dist" / "public"
 
-if FRONTEND_DIR.exists():
+DIST_DIR = BASE_DIR / "dist"
+PUBLIC_DIR = DIST_DIR / "public"
+INDEX_HTML = PUBLIC_DIR / "index.html"
+
+if PUBLIC_DIR.exists():
     # Serve static assets
     app.mount(
         "/assets",
-        StaticFiles(directory=FRONTEND_DIR / "assets"),
-        name="assets"
+        StaticFiles(directory=PUBLIC_DIR / "assets"),
+        name="assets",
     )
 
-    # Override root path to serve frontend
-    @app.get("/")
-    def serve_index():
-        return FileResponse(FRONTEND_DIR / "index.html")
+    # Serve index.html at root
+    @app.get("/", include_in_schema=False)
+    def serve_root():
+        return FileResponse(INDEX_HTML)
 
-    # SPA fallback (React / Vite routing)
-    @app.get("/{path:path}")
-    def serve_frontend(path: str):
-        file_path = FRONTEND_DIR / path
-        if file_path.exists():
-            return FileResponse(file_path)
-        return FileResponse(FRONTEND_DIR / "index.html")
+    # Catch-all for React/Vite routing (must be LAST)
+    @app.get("/{path:path}", include_in_schema=False)
+    def serve_spa(path: str):
+        return FileResponse(INDEX_HTML)
