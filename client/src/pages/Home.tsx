@@ -6,6 +6,9 @@ import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { apiGet } from "@/lib/api";
+import { useEffect } from "react";
+
 import {
   Dialog,
   DialogContent,
@@ -29,7 +32,15 @@ import {
 import logo from "@/assets/kerala-police-logo.jpg";
 
 export default function Home() {
-  const { zones, totalCapacity, totalOccupied, isAdmin, enterVehicle } = useParking();
+  const { isAdmin, enterVehicle } = useParking();
+
+// 🔹 Zones from backend API
+const [zones, setZones] = useState<any[]>([]);
+
+// 🔹 Derived totals (instead of context)
+const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
+const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
+
   const { toast } = useToast();
   
   // Calculate vacancy
@@ -46,6 +57,37 @@ export default function Home() {
     slot: "",
     type: "light" as VehicleType
   });
+
+  useEffect(() => {
+  let isMounted = true;
+
+  const fetchZones = () => {
+    apiGet<any[]>("/api/zones")
+      .then((data) => {
+        if (isMounted) setZones(data);
+      })
+      .catch((err) => {
+        console.error("Failed to load zones", err);
+        toast({
+          variant: "destructive",
+          title: "API Error",
+          description: "Unable to load parking zones from server",
+        });
+      });
+  };
+
+  // Initial load
+  fetchZones();
+
+  // 🔁 Auto refresh every 5 seconds
+  const interval = setInterval(fetchZones, 5000);
+
+  return () => {
+    isMounted = false;
+    clearInterval(interval);
+  };
+}, []);
+
 
   const handleGenerateTicket = () => {
     if (!ticketData.vehicleNumber) {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiGet } from "@/lib/api";
 import { useParking, ParkingZone } from "@/lib/parking-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,9 +15,16 @@ import { Link } from "wouter";
 import { User, Eye, Bus, Truck, Car, ChevronLeft, ChevronRight, Pause, Play, Plus, Pencil, Trash2, FileText, Download, Database } from "lucide-react";
 
 export default function Admin() {
-  const { zones, totalCapacity, totalOccupied, addZone, updateZone, deleteZone } = useParking();
+  const { addZone, updateZone, deleteZone } = useParking();
+  const [zones, setZones] = useState<ParkingZone[]>([]);
   const [selectedZone, setSelectedZone] = useState<ParkingZone | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [zoneVehicles, setZoneVehicles] = useState<any[]>([]);
+    // 🔹 Recalculate totals from backend zones
+  const totalCapacity = zones.reduce((s, z) => s + z.capacity, 0);
+  const totalOccupied = zones.reduce((s, z) => s + z.occupied, 0);
+    // 🔹 Safe vehicle list (backend does not send vehicles yet)
+  const selectedVehicles = selectedZone?.vehicles ?? [];
   
   // Edit/Create State
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -39,6 +47,31 @@ export default function Admin() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+  let mounted = true;
+
+  const fetchZones = () => {
+    apiGet<ParkingZone[]>("/api/zones")
+      .then((data) => {
+        if (mounted) setZones(data);
+      })
+      .catch((err) => {
+        console.error("Admin zone fetch failed", err);
+      });
+  };
+
+  // initial load
+  fetchZones();
+
+  // auto refresh every 5 seconds
+  const interval = setInterval(fetchZones, 5000);
+
+  return () => {
+    mounted = false;
+    clearInterval(interval);
+  };
+}, []);
+
   // Auto-rotate slides
   useEffect(() => {
     if (isPaused) return;
@@ -49,6 +82,15 @@ export default function Admin() {
 
     return () => clearInterval(interval);
   }, [isPaused, totalPages]);
+
+  useEffect(() => {
+  if (!selectedZone) return;
+
+  apiGet<any[]>(`/api/zones/${selectedZone.id}/vehicles`)
+    .then(setZoneVehicles)
+    .catch(() => setZoneVehicles([]));
+}, [selectedZone]);
+
 
   const handlePrev = () => {
     setPageIndex((prev) => (prev - 1 + totalPages) % totalPages);
@@ -289,7 +331,7 @@ export default function Admin() {
           </DialogHeader>
           
           <div className="mt-4">
-             {selectedZone?.vehicles.length === 0 ? (
+             {selectedVehicles.length === 0 ? (
                 <div className="text-center py-8 text-white/50 uppercase tracking-widest border border-white/20">
                   No vehicles currently parked
                 </div>
@@ -305,7 +347,7 @@ export default function Admin() {
                      </tr>
                    </thead>
                    <tbody>
-                     {selectedZone?.vehicles.map((v, i) => (
+                     {selectedVehicles.map((v, i) => (
                        <tr key={i} className="border-b border-white/20 hover:bg-white/5">
                          <td className="p-3">
                            <div className="flex items-center gap-2">
