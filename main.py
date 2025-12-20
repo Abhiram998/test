@@ -16,17 +16,30 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL not set")
 
-print("🚀 Using DATABASE_URL:", DATABASE_URL)
+print("🚀 FastAPI booting (Railway-safe mode)")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine)
+# ================== DB (LAZY CONNECTION) ==================
+engine = None
+SessionLocal = None
+
+def get_db():
+    global engine, SessionLocal
+    if engine is None:
+        engine = create_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10
+        )
+        SessionLocal = sessionmaker(bind=engine)
+    return SessionLocal()
 
 # ================== APP ==================
 app = FastAPI(title="Nilakkal Parking Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # OK for dev
+    allow_origins=["*"],  # OK for dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,13 +48,12 @@ app.add_middleware(
 # ================== HEALTH ==================
 @app.get("/api/health")
 def health():
-    return {"ok": True}
-
+    return {"status": "ok"}
 
 # ================== LIVE DASHBOARD ==================
 @app.get("/api/zones")
 def get_zones():
-    db = SessionLocal()
+    db = get_db()
     try:
         rows = db.execute(text("""
             SELECT
@@ -81,18 +93,17 @@ def get_zones():
     finally:
         db.close()
 
-
 # ================== LIVE VEHICLES IN A ZONE ==================
 @app.get("/api/zones/{zone_id}/vehicles")
 def get_zone_vehicles(zone_id: str):
-    db = SessionLocal()
+    db = get_db()
     try:
         rows = db.execute(text("""
             SELECT
                 v.vehicle_number AS number,
                 vt.type_name AS type,
-                pt.ticket_code AS ticketId,
-                pt.entry_time AS entryTime
+                pt.ticket_code AS "ticketId",
+                pt.entry_time AS "entryTime"
             FROM parking_tickets pt
             JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
             JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
@@ -101,25 +112,23 @@ def get_zone_vehicles(zone_id: str):
             ORDER BY pt.entry_time DESC
         """), {"zone_id": zone_id}).mappings().all()
 
-        vehicles = []
-        for r in rows:
-            vehicles.append({
+        return [
+            {
                 "number": r["number"],
-                "type": r["type"],           # already Light / Medium / Heavy
-                "ticketId": r["ticketid"],
-                "entryTime": r["entrytime"]
-            })
-
-        return vehicles
+                "type": r["type"],        # Light / Medium / Heavy
+                "ticketId": r["ticketId"],
+                "entryTime": r["entryTime"]
+            }
+            for r in rows
+        ]
 
     finally:
         db.close()
 
-
 # ================== SNAPSHOT API ==================
 @app.post("/api/snapshot")
 def save_snapshot():
-    db = SessionLocal()
+    db = get_db()
     try:
         rows = db.execute(text("""
             SELECT
@@ -159,11 +168,10 @@ def save_snapshot():
     finally:
         db.close()
 
-
 # ================== REPORT API ==================
 @app.get("/api/reports")
 def get_reports(date: str, zone: str = "ALL"):
-    db = SessionLocal()
+    db = get_db()
     try:
         query = """
             SELECT *
@@ -180,7 +188,6 @@ def get_reports(date: str, zone: str = "ALL"):
 
     finally:
         db.close()
-
 
 # ================== FRONTEND (SPA) ==================
 BASE_DIR = Path(__file__).resolve().parent
