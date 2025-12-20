@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -13,10 +13,12 @@ import os
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL not set")
 
 print("🚀 FastAPI booting (Railway-safe mode)")
+if DATABASE_URL:
+    print("✅ DATABASE_URL detected")
+else:
+    print("⚠️ DATABASE_URL missing (healthcheck will still pass)")
 
 # ================== DB (LAZY CONNECTION) ==================
 engine = None
@@ -24,14 +26,18 @@ SessionLocal = None
 
 def get_db():
     global engine, SessionLocal
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
     if engine is None:
         engine = create_engine(
             DATABASE_URL,
             pool_pre_ping=True,
             pool_size=5,
-            max_overflow=10
+            max_overflow=10,
         )
         SessionLocal = sessionmaker(bind=engine)
+
     return SessionLocal()
 
 # ================== APP ==================
@@ -48,7 +54,10 @@ app.add_middleware(
 # ================== HEALTH ==================
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "db_configured": DATABASE_URL is not None
+    }
 
 # ================== LIVE DASHBOARD ==================
 @app.get("/api/zones")
@@ -115,9 +124,9 @@ def get_zone_vehicles(zone_id: str):
         return [
             {
                 "number": r["number"],
-                "type": r["type"],        # Light / Medium / Heavy
+                "type": r["type"],
                 "ticketId": r["ticketId"],
-                "entryTime": r["entryTime"]
+                "entryTime": r["entryTime"],
             }
             for r in rows
         ]
