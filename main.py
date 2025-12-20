@@ -51,7 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # ================== ROOT (RAILWAY HEALTH SAFETY) ==================
-@app.get("/")
+@app.get("/api")
 def root():
     return {"status": "ok"}
 
