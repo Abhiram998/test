@@ -207,8 +207,22 @@ BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "dist" / "public"
 
 if FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+    # Serve static assets
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIR / "assets"),
+        name="assets"
+    )
 
+    # Override root path to serve frontend
+    @app.get("/")
+    def serve_index():
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    # SPA fallback (React / Vite routing)
     @app.get("/{path:path}")
     def serve_frontend(path: str):
+        file_path = FRONTEND_DIR / path
+        if file_path.exists():
+            return FileResponse(file_path)
         return FileResponse(FRONTEND_DIR / "index.html")
