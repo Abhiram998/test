@@ -57,22 +57,27 @@ export default function Report() {
   /* ================= FETCH REPORTS ================= */
 
   useEffect(() => {
-    if (!date) return;
+  if (!date) return;
 
-    const formattedDate = format(date, "yyyy-MM-dd");
-    setLoading(true);
+  const formattedDate = format(date, "yyyy-MM-dd");
+  const zoneParam =
+    selectedZoneId === "all" ? "ALL" : selectedZoneId;
 
-    apiGet<ReportRow[]>(`/api/reports?date=${formattedDate}`)
-      .then(setReports)
-      .catch(() => {
-        toast({
-          variant: "destructive",
-          title: "Failed to load report",
-          description: "Could not fetch report data from server",
-        });
-      })
-      .finally(() => setLoading(false));
-  }, [date, toast]);
+  setLoading(true);
+
+  apiGet<ReportRow[]>(
+    `/api/reports?date=${formattedDate}&zone=${zoneParam}`
+  )
+    .then(setReports)
+    .catch(() => {
+      toast({
+        variant: "destructive",
+        title: "Failed to load report",
+        description: "Could not fetch report data from server",
+      });
+    })
+    .finally(() => setLoading(false));
+}, [date, selectedZoneId, toast]);
 
   /* ================= FILTER ================= */
 
