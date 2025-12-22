@@ -32,7 +32,7 @@ import {
 import logo from "@/assets/kerala-police-logo.jpg";
 
 export default function Home() {
-  const { isAdmin, enterVehicle } = useParking();
+  const { isAdmin } = useParking();
 
 // 🔹 Zones from backend API
 const [zones, setZones] = useState<any[]>([]);
@@ -89,38 +89,41 @@ const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
 }, []);
 
 
-  const handleGenerateTicket = () => {
-    if (!ticketData.vehicleNumber) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Please enter a vehicle number",
-      });
-      return;
-    }
+const handleGenerateTicket = async () => {
+  if (!ticketData.vehicleNumber) {
+    toast({
+      variant: "destructive",
+      title: "Error",
+      description: "Please enter a vehicle number",
+    });
+    return;
+  }
 
-    const result = enterVehicle(
-      ticketData.vehicleNumber, 
-      ticketData.type, 
-      ticketData.zoneId || undefined, 
-      ticketData.slot || undefined
+  try {
+    await apiGet(
+      `/api/enter?vehicle=${encodeURIComponent(ticketData.vehicleNumber)}&type=${ticketData.type}${ticketData.zoneId ? `&zone=${ticketData.zoneId}` : ""}${ticketData.slot ? `&slot=${ticketData.slot}` : ""}`
     );
 
-    if (result.success) {
-      toast({
-        title: "Ticket Generated",
-        description: `Ticket ${result.ticket.ticketId} created for ${result.ticket.vehicleNumber} in ${result.ticket.zoneName}`,
-      });
-      setIsTicketOpen(false);
-      setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
-    } else {
-      toast({
-        variant: "destructive",
-        title: "Generation Failed",
-        description: result.message,
-      });
-    }
-  };
+    toast({
+      title: "Ticket Generated",
+      description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
+    });
+
+    setIsTicketOpen(false);
+    setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
+
+    // 🔁 FORCE REFRESH ZONES
+    apiGet<any[]>("/api/zones").then(setZones);
+
+  } catch (err: any) {
+    toast({
+      variant: "destructive",
+      title: "Generation Failed",
+      description: err?.message || "Could not generate ticket",
+    });
+  }
+};
+
 
   // Chart Data Preparation
   const barChartData = zones.map(zone => {
