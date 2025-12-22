@@ -221,6 +221,16 @@ def enter_vehicle(payload: dict = Body(...)):
             WHERE zone_id = :zone_id
         """), {"zone_id": zone_id})
 
+        # 🔍 DEBUG: verify update happened in THIS DB connection
+        row = db.execute(text("""
+        SELECT current_occupied
+        FROM parking_zones
+        WHERE zone_id = :zone_id
+        """), {"zone_id": zone_id}).scalar()
+
+        print("🔥 AFTER UPDATE current_occupied =", row)
+
+
         db.execute(text("""
             UPDATE zone_type_limits
             SET current_count = current_count + 1
