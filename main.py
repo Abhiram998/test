@@ -207,6 +207,53 @@ def list_snapshots():
     finally:
         db.close()
 
+# ================== QUICK RECOVERY ==================
+@app.post("/api/restore/latest")
+def restore_latest_snapshot():
+    db = get_db()
+    try:
+        snapshot = db.execute(text("""
+            SELECT *
+            FROM parking_snapshots
+            ORDER BY snapshot_time DESC
+            LIMIT 1
+        """)).mappings().first()
+
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="No snapshot found")
+
+        # Restore zone occupancy
+        db.execute(text("""
+            UPDATE parking_zones
+            SET current_occupied = :occupied
+            WHERE zone_id = :zone_id
+        """), {
+            "occupied": snapshot["occupied"],
+            "zone_id": snapshot["zone_id"]
+        })
+
+        # Restore vehicle type counts
+        db.execute(text("""
+            UPDATE zone_type_limits
+            SET current_count = CASE
+                WHEN vehicle_type_id = (SELECT id FROM vehicle_types WHERE type_name='Heavy') THEN :heavy
+                WHEN vehicle_type_id = (SELECT id FROM vehicle_types WHERE type_name='Medium') THEN :medium
+                WHEN vehicle_type_id = (SELECT id FROM vehicle_types WHERE type_name='Light') THEN :light
+            END
+            WHERE zone_id = :zone_id
+        """), {
+            "zone_id": snapshot["zone_id"],
+            "heavy": snapshot["heavy"],
+            "medium": snapshot["medium"],
+            "light": snapshot["light"]
+        })
+
+        db.commit()
+        return {"ok": True, "restored_from": snapshot["snapshot_time"]}
+
+    finally:
+        db.close()
+
 # ================== REPORT API ==================
 @app.get("/api/reports")
 def get_reports(date: str, zone: str = "ALL"):
