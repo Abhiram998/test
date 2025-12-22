@@ -572,4 +572,4 @@ const handleGenerateTicket = async () => {
       </Dialog>
     </div>
   );
-}
+};
