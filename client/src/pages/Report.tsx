@@ -53,21 +53,31 @@ export default function Report() {
   const [selectedZoneId, setSelectedZoneId] = useState("all");
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [reportType, setReportType] = useState<"daily" | "monthly" | "yearly">("daily");
+
 
   /* ================= FETCH REPORTS ================= */
 
-  useEffect(() => {
+useEffect(() => {
   if (!date) return;
-
-  const formattedDate = format(date, "yyyy-MM-dd");
-  const zoneParam =
-    selectedZoneId === "all" ? "ALL" : selectedZoneId;
 
   setLoading(true);
 
-  apiGet<ReportRow[]>(
-    `/api/reports?date=${formattedDate}&zone=${zoneParam}`
-  )
+  let url = "";
+
+  if (reportType === "daily") {
+    url = `/api/reports?date=${format(date, "yyyy-MM-dd")}`;
+  }
+
+  if (reportType === "monthly") {
+    url = `/api/reports/monthly?year=${date.getFullYear()}&month=${date.getMonth() + 1}`;
+  }
+
+  if (reportType === "yearly") {
+    url = `/api/reports/yearly?year=${date.getFullYear()}`;
+  }
+
+  apiGet<ReportRow[]>(url)
     .then(setReports)
     .catch(() => {
       toast({
@@ -77,7 +87,7 @@ export default function Report() {
       });
     })
     .finally(() => setLoading(false));
-}, [date, selectedZoneId, toast]);
+}, [date, reportType]);
 
   /* ================= FILTER ================= */
 
