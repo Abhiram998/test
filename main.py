@@ -138,6 +138,113 @@ def get_zone_vehicles(zone_id: str):
     finally:
         db.close()
 
+# ================== ENTER VEHICLE (GENERATE TICKET) ==================
+@app.get("/api/enter")
+def enter_vehicle(
+    vehicle: str,
+    type: str = "light",
+    zone: str | None = None,
+    slot: str | None = None
+):
+    db = get_db()
+    try:
+        # 1️⃣ Normalize type
+        vtype = type.capitalize()
+        if vtype not in ("Light", "Medium", "Heavy"):
+            raise HTTPException(status_code=400, detail="Invalid vehicle type")
+
+        # 2️⃣ Find available zone
+        if zone:
+            z = db.execute(text("""
+                SELECT *
+                FROM parking_zones
+                WHERE zone_id = :zone
+                  AND status = 'ACTIVE'
+                  AND current_occupied < total_capacity
+            """), {"zone": zone}).mappings().first()
+        else:
+            z = db.execute(text("""
+                SELECT *
+                FROM parking_zones
+                WHERE status = 'ACTIVE'
+                  AND current_occupied < total_capacity
+                ORDER BY zone_id
+                LIMIT 1
+            """)).mappings().first()
+
+        if not z:
+            raise HTTPException(status_code=400, detail="No available zone")
+
+        zone_id = z["zone_id"]
+
+        # 3️⃣ Get vehicle type id
+        vt = db.execute(text("""
+            SELECT id FROM vehicle_types WHERE type_name = :type
+        """), {"type": vtype}).mappings().first()
+
+        if not vt:
+            raise HTTPException(status_code=400, detail="Vehicle type not found")
+
+        vehicle_type_id = vt["id"]
+
+        # 4️⃣ Insert vehicle
+        vehicle_id = db.execute(text("""
+            INSERT INTO vehicles (vehicle_number, vehicle_type_id)
+            VALUES (:number, :type)
+            RETURNING vehicle_id
+        """), {
+            "number": vehicle,
+            "type": vehicle_type_id
+        }).scalar()
+
+        # 5️⃣ Generate ticket
+        ticket_code = f"TKT-{int(datetime.now().timestamp())}"
+
+        db.execute(text("""
+            INSERT INTO parking_tickets
+            (ticket_code, vehicle_id, zone_id, entry_time, slot)
+            VALUES (:code, :vehicle_id, :zone_id, :time, :slot)
+        """), {
+            "code": ticket_code,
+            "vehicle_id": vehicle_id,
+            "zone_id": zone_id,
+            "time": datetime.now(),
+            "slot": slot
+        })
+
+        # 6️⃣ UPDATE ZONE OCCUPANCY ❗❗❗
+        db.execute(text("""
+            UPDATE parking_zones
+            SET current_occupied = current_occupied + 1
+            WHERE zone_id = :zone_id
+        """), {"zone_id": zone_id})
+
+        # 7️⃣ UPDATE VEHICLE TYPE COUNT ❗❗❗
+        db.execute(text("""
+            UPDATE zone_type_limits
+            SET current_count = current_count + 1
+            WHERE zone_id = :zone_id
+              AND vehicle_type_id = :vt_id
+        """), {
+            "zone_id": zone_id,
+            "vt_id": vehicle_type_id
+        })
+
+        db.commit()
+
+        return {
+            "success": True,
+            "ticket": ticket_code,
+            "zone": z["zone_name"],
+            "vehicle": vehicle
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
 # ================== SNAPSHOT API ==================
 @app.post("/api/snapshot")
 def save_snapshot():
