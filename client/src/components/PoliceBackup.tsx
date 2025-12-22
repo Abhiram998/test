@@ -21,7 +21,7 @@ type BackupSnapshot = {
 };
 
 interface PoliceBackupProps {
-  getRecords: () => VehicleRecord[];
+  getRecords: () => Promise<VehicleRecord[]>;
   onRestore: (records: VehicleRecord[]) => void;
   appName?: string;
 }
@@ -72,11 +72,11 @@ export default function PoliceBackup({
     };
   };
 
-  const handleSaveSnapshot = () => {
+  const handleSaveSnapshot = async () => {
     if (!db) return;
     setStatus('Saving snapshot...');
 
-    const records = getRecords();
+   const records = await getRecords();
     const snapshot: Omit<BackupSnapshot, 'id'> = {
       meta: {
         app: appName,

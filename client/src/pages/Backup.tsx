@@ -7,39 +7,45 @@ import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
+/* ================= TYPES ================= */
+
 type SnapshotMeta = {
   snapshot_time: string;
   records: number;
 };
 
+/* ================= COMPONENT ================= */
+
 export default function Backup() {
-  const { zones, restoreData } = useParking();
+  const { restoreData } = useParking();
   const { toast } = useToast();
 
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
   const [loading, setLoading] = useState(false);
 
-  /* ================= FETCH SNAPSHOTS ================= */
+  /* ================= FETCH SNAPSHOT LIST ================= */
 
-  const loadSnapshots = () => {
+  const loadSnapshots = async () => {
     setLoading(true);
-    apiGet<SnapshotMeta[]>("/api/snapshots")
-      .then(setSnapshots)
-      .catch(() => {
-        toast({
-          variant: "destructive",
-          title: "Failed to load backups",
-          description: "Could not fetch snapshot history from server",
-        });
-      })
-      .finally(() => setLoading(false));
+    try {
+      const data = await apiGet<SnapshotMeta[]>("/api/snapshots");
+      setSnapshots(data);
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Failed to load backups",
+        description: "Could not fetch snapshot history from server",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     loadSnapshots();
   }, []);
 
-  /* ================= SAVE SNAPSHOT ================= */
+  /* ================= SAVE SNAPSHOT (BACKEND) ================= */
 
   const saveSnapshot = async () => {
     try {
@@ -58,17 +64,25 @@ export default function Backup() {
     }
   };
 
-  /* ================= RECORDS (LIVE DATA) ================= */
+  /* ================= GET RECORDS (FROM BACKEND SNAPSHOT) ================= */
 
-  const getRecords = (): VehicleRecord[] => {
-    return zones.flatMap((z) =>
-      z.vehicles.map((v) => ({
-        plate: v.number,
-        zone: z.name,
-        timeIn: new Date(v.entryTime).toISOString(),
-        timeOut: null,
-      }))
-    );
+  const getRecords = async (): Promise<VehicleRecord[]> => {
+    const today = new Date().toISOString().slice(0, 10);
+
+    const rows = await apiGet<any[]>(`/api/reports?date=${today}`);
+
+    return rows.map((r) => ({
+      plate: `SNAP-${r.zone_id}`, // placeholder identifier
+      zone: r.zone_name,
+      timeIn: r.snapshot_time,
+      timeOut: null,
+      type:
+        r.heavy > 0
+          ? "heavy"
+          : r.medium > 0
+          ? "medium"
+          : "light",
+    }));
   };
 
   /* ================= UI ================= */
@@ -82,8 +96,9 @@ export default function Backup() {
             <ArrowLeft className="w-5 h-5" />
           </Button>
         </Link>
+
         <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
             <Database className="w-6 h-6" />
             System Backup
           </h1>
@@ -94,7 +109,7 @@ export default function Backup() {
       </div>
 
       {/* BACKUP PANEL */}
-      <div className="bg-black p-6 rounded-lg shadow-xl border border-border">
+      <div className="bg-black p-6 rounded-lg shadow-xl border">
         <PoliceBackup
           getRecords={getRecords}
           onRestore={restoreData}
