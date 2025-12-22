@@ -181,6 +181,32 @@ def save_snapshot():
     finally:
         db.close()
 
+# ================== LIST SNAPSHOTS (BACKUP PAGE) ==================
+@app.get("/api/snapshots")
+def list_snapshots():
+    db = get_db()
+    try:
+        rows = db.execute(text("""
+            SELECT
+                DATE(snapshot_time) AS snapshot_date,
+                snapshot_time,
+                COUNT(*) AS records
+            FROM parking_snapshots
+            GROUP BY snapshot_time
+            ORDER BY snapshot_time DESC
+        """)).mappings().all()
+
+        return [
+            {
+                "snapshot_time": r["snapshot_time"],
+                "records": r["records"]
+            }
+            for r in rows
+        ]
+
+    finally:
+        db.close()
+
 # ================== REPORT API ==================
 @app.get("/api/reports")
 def get_reports(date: str, zone: str = "ALL"):
@@ -201,6 +227,67 @@ def get_reports(date: str, zone: str = "ALL"):
 
     finally:
         db.close()
+
+    # ================== MONTHLY REPORT ==================
+@app.get("/api/reports/monthly")
+def get_monthly_report(year: int, month: int, zone: str = "ALL"):
+    db = get_db()
+    try:
+        query = """
+            SELECT
+                zone_id,
+                zone_name,
+                SUM(heavy) AS heavy,
+                SUM(medium) AS medium,
+                SUM(light) AS light,
+                AVG(occupied)::INT AS avg_occupied,
+                MAX(capacity) AS capacity
+            FROM parking_snapshots
+            WHERE EXTRACT(YEAR FROM snapshot_time) = :year
+              AND EXTRACT(MONTH FROM snapshot_time) = :month
+        """
+        params = {"year": year, "month": month}
+
+        if zone != "ALL":
+            query += " AND zone_id = :zone"
+            params["zone"] = zone
+
+        query += " GROUP BY zone_id, zone_name ORDER BY zone_id"
+
+        return db.execute(text(query), params).mappings().all()
+    finally:
+        db.close()
+
+
+# ================== YEARLY REPORT ==================
+@app.get("/api/reports/yearly")
+def get_yearly_report(year: int, zone: str = "ALL"):
+    db = get_db()
+    try:
+        query = """
+            SELECT
+                zone_id,
+                zone_name,
+                SUM(heavy) AS heavy,
+                SUM(medium) AS medium,
+                SUM(light) AS light,
+                AVG(occupied)::INT AS avg_occupied,
+                MAX(capacity) AS capacity
+            FROM parking_snapshots
+            WHERE EXTRACT(YEAR FROM snapshot_time) = :year
+        """
+        params = {"year": year}
+
+        if zone != "ALL":
+            query += " AND zone_id = :zone"
+            params["zone"] = zone
+
+        query += " GROUP BY zone_id, zone_name ORDER BY zone_id"
+
+        return db.execute(text(query), params).mappings().all()
+    finally:
+        db.close()
+    
 
 # ================== FRONTEND (SPA) ==================
 BASE_DIR = Path(__file__).resolve().parent
