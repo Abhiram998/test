@@ -2,12 +2,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime
 from db import get_db
+from sqlalchemy import text
 import os
 
 # ================== ENV ==================
@@ -61,7 +60,7 @@ def get_zones():
             FROM parking_zones z
             JOIN zone_type_limits zl ON zl.zone_id = z.zone_id
             JOIN vehicle_types vt ON vt.id = zl.vehicle_type_id
-            WHERE z.status = 'ACTIVE'
+            WHERE UPPER(z.status) = 'ACTIVE'
             ORDER BY z.zone_id
         """)).fetchall()
 
