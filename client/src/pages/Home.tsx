@@ -1,4 +1,4 @@
-import { useParking, VehicleType } from "@/lib/parking-context";
+import { VehicleType } from "@/lib/parking-context";
 import { ZoneCard } from "@/components/parking/ZoneCard";
 import { MapPin, Search, MoreHorizontal, Activity, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -54,8 +54,19 @@ type Zone = {
   }[];
 };
 
+type VehicleSearchResult = {
+  vehicle_number: string;
+  type_name: string;
+  zone_id: string;
+  zone_name: string;
+  ticket_code: string;
+  entry_time: string;
+};
+
+
 export default function Home() {
-  const { isAdmin } = useParking();
+  const isAdmin = true;
+
 
 // 🔹 Zones from backend API
 const [zones, setZones] = useState<Zone[]>([]);
@@ -123,9 +134,13 @@ const handleGenerateTicket = async () => {
   }
 
   try {
-    await apiGet(
-      `/api/enter?vehicle=${encodeURIComponent(ticketData.vehicleNumber)}&type=${ticketData.type}${ticketData.zoneId ? `&zone=${ticketData.zoneId}` : ""}${ticketData.slot ? `&slot=${ticketData.slot}` : ""}`
-    );
+     await apiPost("/api/enter", {
+     vehicle: ticketData.vehicleNumber,
+     type: ticketData.type,
+     zone: ticketData.zoneId || undefined,
+     slot: ticketData.slot || undefined,
+    });
+
 
     toast({
       title: "Ticket Generated",
@@ -203,24 +218,27 @@ const handleGenerateTicket = async () => {
   const [searchResult, setSearchResult] = useState<any>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setHasSearched(true);
-    if (!searchQuery.trim()) {
-      setSearchResult(null);
-      return;
-    }
-    for (const zone of zones) {
-      const vehicle = zone.vehicles?.find(v =>
-  v.number.toLowerCase().includes(searchQuery.toLowerCase()));
+ const handleSearch = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-      if (vehicle) {
-        setSearchResult({ zone, vehicle });
-        return;
-      }
-    }
+  if (!searchQuery.trim()) return;
+
+  try {
+    const result = await apiGet<VehicleSearchResult>(
+      `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+    );
+
+    setSearchResult(result);
+  } catch {
     setSearchResult(null);
-  };
+    toast({
+      variant: "destructive",
+      title: "Not Found",
+      description: "Vehicle not currently parked",
+    });
+  }
+};
+
 
   const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
     <div className={`rounded-xl p-3 shadow-sm border relative overflow-hidden group hover:shadow-md transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
@@ -474,20 +492,20 @@ const handleGenerateTicket = async () => {
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
-                          <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2 animate-in fade-in slide-in-from-right-5">
-                              <span className="font-bold">{searchResult.vehicle.number}</span>
-                              <span>in {searchResult.zone.name}</span>
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full"
-                                onClick={() => setSearchResult(null)}
-                              >
-                                <span className="sr-only">Dismiss</span>
-                                ×
-                              </Button>
-                          </div>
-                      )}
+  <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
+    <span className="font-bold">{searchResult.vehicle_number}</span>
+    <span>in {searchResult.zone_name}</span>
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full"
+      onClick={() => setSearchResult(null)}
+    >
+      ×
+    </Button>
+  </div>
+)}
+
                       <form onSubmit={handleSearch} className="flex gap-2">
                           <Input 
                               placeholder="Find Vehicle..." 

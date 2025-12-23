@@ -255,7 +255,35 @@ def enter_vehicle(payload: dict = Body(...)):
 
     finally:
         db.close()
+#search vechile 
 
+@app.get("/api/search/vehicle")
+def search_vehicle(number: str):
+    db = get_db()
+    try:
+        row = db.execute(text("""
+            SELECT
+                v.vehicle_number,
+                vt.type_name,
+                z.zone_id,
+                z.zone_name,
+                pt.ticket_code,
+                pt.entry_time
+            FROM parking_tickets pt
+            JOIN vehicles v ON v.vehicle_id = pt.vehicle_id
+            JOIN vehicle_types vt ON vt.id = v.vehicle_type_id
+            JOIN parking_zones z ON z.zone_id = pt.zone_id
+            WHERE v.vehicle_number ILIKE :number
+              AND pt.exit_time IS NULL
+            LIMIT 1
+        """), {"number": f"%{number}%"}).mappings().first()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+
+        return row
+    finally:
+        db.close()
 
 # ================== SNAPSHOT API ==================
 @app.post("/api/snapshot")
