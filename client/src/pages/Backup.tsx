@@ -64,15 +64,14 @@ export default function Backup() {
     }
   };
 
-  /* ================= GET RECORDS (FROM BACKEND SNAPSHOT) ================= */
+  /* ================= GET RECORDS (FOR RESTORE) ================= */
 
   const getRecords = async (): Promise<VehicleRecord[]> => {
     const today = new Date().toISOString().slice(0, 10);
-
     const rows = await apiGet<any[]>(`/api/reports?date=${today}`);
 
     return rows.map((r) => ({
-      plate: `SNAP-${r.zone_id}`, // placeholder identifier
+      plate: `SNAP-${r.zone_id}`,
       zone: r.zone_name,
       timeIn: r.snapshot_time,
       timeOut: null,
@@ -109,14 +108,28 @@ export default function Backup() {
       </div>
 
       {/* BACKUP PANEL */}
-      <div className="bg-black p-6 rounded-lg shadow-xl border">
+      <div className="bg-black p-6 rounded-lg shadow-xl border space-y-4">
+        {/* SAVE SNAPSHOT BUTTON */}
+        <Button
+          onClick={saveSnapshot}
+          disabled={loading}
+          className="bg-blue-600 hover:bg-blue-700"
+        >
+          Save Snapshot
+        </Button>
+
+        {/* SNAPSHOT LIST */}
+        <div className="text-sm text-muted-foreground">
+          {snapshots.length === 0
+            ? "No backups available"
+            : `${snapshots.length} backups available`}
+        </div>
+
+        {/* RESTORE PANEL */}
         <PoliceBackup
           getRecords={getRecords}
           onRestore={restoreData}
           appName="nilakkal-police-admin"
-          snapshots={snapshots}
-          loading={loading}
-          onSaveSnapshot={saveSnapshot}
         />
       </div>
     </div>

@@ -1,9 +1,18 @@
-// Base API URL (from Vite env or fallback to local FastAPI)
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+// =======================================================
+// Central API configuration for Nilakkal Parking Frontend
+// =======================================================
 
+// 🔥 IMPORTANT:
+// - In production, this MUST point to Railway backend
+// - In local dev, it can fall back to localhost
+
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL?.replace(/\/$/, "") ||
+  "https://test-production-8b24.up.railway.app";
+
+// -------------------------
 // Generic GET helper
+// -------------------------
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "GET",
@@ -20,7 +29,9 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// (Optional, ready for future use)
+// -------------------------
+// Generic POST helper
+// -------------------------
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",

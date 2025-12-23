@@ -31,11 +31,34 @@ import {
 
 import logo from "@/assets/kerala-police-logo.jpg";
 
+type Zone = {
+  id: string;
+  name: string;
+  capacity: number;
+  occupied: number;
+  limits: {
+    heavy: number;
+    medium: number;
+    light: number;
+  };
+  stats: {
+    heavy: number;
+    medium: number;
+    light: number;
+  };
+  vehicles?: {
+    number: string;
+    type: "light" | "medium" | "heavy";
+    ticketId?: string;
+    entryTime?: string;
+  }[];
+};
+
 export default function Home() {
   const { isAdmin } = useParking();
 
 // 🔹 Zones from backend API
-const [zones, setZones] = useState<any[]>([]);
+const [zones, setZones] = useState<Zone[]>([]);
 
 // 🔹 Derived totals (instead of context)
 const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
@@ -47,7 +70,7 @@ const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
   const totalVacancy = totalCapacity - totalOccupied;
   
   // State for interactive graph
-  const [hoveredZone, setHoveredZone] = useState<any>(null);
+  const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
 
   // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
@@ -62,7 +85,7 @@ const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
   let isMounted = true;
 
   const fetchZones = () => {
-    apiGet<any[]>("/api/zones")
+    apiGet<Zone[]>("/api/zones")
       .then((data) => {
         if (isMounted) setZones(data);
       })
@@ -113,7 +136,7 @@ const handleGenerateTicket = async () => {
     setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
 
     // 🔁 FORCE REFRESH ZONES
-    apiGet<any[]>("/api/zones").then(setZones);
+    apiGet<Zone[]>("/api/zones").then(setZones);
 
   } catch (err: any) {
     toast({
@@ -188,7 +211,9 @@ const handleGenerateTicket = async () => {
       return;
     }
     for (const zone of zones) {
-      const vehicle = zone.vehicles.find(v => v.number.toLowerCase().includes(searchQuery.toLowerCase()));
+      const vehicle = zone.vehicles?.find(v =>
+  v.number.toLowerCase().includes(searchQuery.toLowerCase()));
+
       if (vehicle) {
         setSearchResult({ zone, vehicle });
         return;
@@ -481,7 +506,7 @@ const handleGenerateTicket = async () => {
              {/* 10 columns as requested */}
              <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
                 {zones.map((zone) => (
-                  <ZoneCard key={zone.id} zone={zone} />
+                  <ZoneCard key={zone.id}zone={zone} />
                 ))}
              </div>
           </div>
