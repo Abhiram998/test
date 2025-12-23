@@ -143,162 +143,61 @@ from fastapi import Body
 
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...)):
-    print("🔥 /api/enter CALLED")
+    print("🔥 /api/enter CALLED", payload)
     db = get_db()
     try:
         vehicle = payload.get("vehicle")
-        type = payload.get("type", "light")
+        vtype_raw = payload.get("type", "light")
         zone = payload.get("zone")
         slot = payload.get("slot")
 
         if not vehicle:
             raise HTTPException(status_code=400, detail="Vehicle number required")
 
-        # 1️⃣ Normalize type
-        vtype = type.capitalize()
-        if vtype not in ("Light", "Medium", "Heavy"):
+        # Normalize type
+        vtype = vtype_raw.lower()
+        if vtype not in ("light", "medium", "heavy"):
             raise HTTPException(status_code=400, detail="Invalid vehicle type")
 
-        # 2️⃣ Find available zone
-        if zone:
-            z = db.execute(text("""
-                SELECT *
-                FROM parking_zones
-                WHERE zone_id = :zone
-                  AND status = 'ACTIVE'
-                  AND current_occupied < total_capacity
-            """), {"zone": zone}).mappings().first()
-        else:
-            z = db.execute(text("""
-                SELECT *
-                FROM parking_zones
-                WHERE status = 'ACTIVE'
-                  AND current_occupied < total_capacity
-                ORDER BY zone_id
-                LIMIT 1
-            """)).mappings().first()
-
-        if not z:
-            raise HTTPException(status_code=400, detail="No available zone")
-
-        zone_id = z["zone_id"]
-
-        # 3️⃣ Vehicle type id
+        # Find vehicle type ID
         vt = db.execute(text("""
-            SELECT id FROM vehicle_types WHERE type_name = :type
-        """), {"type": vtype}).mappings().first()
-
-        vehicle_type_id = vt["id"]
-
-        # 4️⃣ Insert vehicle
-        vehicle_id = db.execute(text("""
-            INSERT INTO vehicles (vehicle_number, vehicle_type_id)
-            VALUES (:number, :type)
-            RETURNING vehicle_id
-        """), {
-            "number": vehicle,
-            "type": vehicle_type_id
-        }).scalar()
-
-        # 5️⃣ Insert ticket
-        ticket_code = f"TKT-{int(datetime.now().timestamp())}"
-
-        db.execute(text("""
-            INSERT INTO parking_tickets
-            (ticket_code, vehicle_id, zone_id, entry_time, slot)
-            VALUES (:code, :vehicle_id, :zone_id, :time, :slot)
-        """), {
-            "code": ticket_code,
-            "vehicle_id": vehicle_id,
-            "zone_id": zone_id,
-            "time": datetime.now(),
-            "slot": slot
-        })
-
-        # 6️⃣ UPDATE COUNTS ✅
-        db.execute(text("""
-            UPDATE parking_zones
-            SET current_occupied = current_occupied + 1
-            WHERE zone_id = :zone_id
-        """), {"zone_id": zone_id})
-
-        # 🔍 DEBUG: verify update happened in THIS DB connection
-        row = db.execute(text("""
-        SELECT current_occupied
-        FROM parking_zones
-        WHERE zone_id = :zone_id
-        """), {"zone_id": zone_id}).scalar()
-
-        print("🔥 AFTER UPDATE current_occupied =", row)
-
-
-        db.execute(text("""
-            UPDATE zone_type_limits
-            SET current_count = current_count + 1
-            WHERE zone_id = :zone_id
-              AND vehicle_type_id = :vt_id
-        """), {
-            "zone_id": zone_id,
-            "vt_id": vehicle_type_id
-        })
-
-        db.commit()
-
-        return {
-            "success": True,
-            "ticket": ticket_code,
-            "zone": z["zone_name"],
-            "vehicle": vehicle
-        }
-
-    except:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-    db = get_db()
-    try:
-        # 1️⃣ Normalize type
-        vtype = type.capitalize()
-        if vtype not in ("Light", "Medium", "Heavy"):
-            raise HTTPException(status_code=400, detail="Invalid vehicle type")
-
-        # 2️⃣ Find available zone
-        if zone:
-            z = db.execute(text("""
-                SELECT *
-                FROM parking_zones
-                WHERE zone_id = :zone
-                  AND status = 'ACTIVE'
-                  AND current_occupied < total_capacity
-            """), {"zone": zone}).mappings().first()
-        else:
-            z = db.execute(text("""
-                SELECT *
-                FROM parking_zones
-                WHERE status = 'ACTIVE'
-                  AND current_occupied < total_capacity
-                ORDER BY zone_id
-                LIMIT 1
-            """)).mappings().first()
-
-        if not z:
-            raise HTTPException(status_code=400, detail="No available zone")
-
-        zone_id = z["zone_id"]
-
-        # 3️⃣ Get vehicle type id
-        vt = db.execute(text("""
-            SELECT id FROM vehicle_types WHERE type_name = :type
+            SELECT id FROM vehicle_types
+            WHERE LOWER(type_name) = :type
         """), {"type": vtype}).mappings().first()
 
         if not vt:
-            raise HTTPException(status_code=400, detail="Vehicle type not found")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Vehicle type '{vtype}' not found in DB"
+            )
 
         vehicle_type_id = vt["id"]
 
-        # 4️⃣ Insert vehicle
+        # Find available zone
+        if zone:
+            z = db.execute(text("""
+                SELECT *
+                FROM parking_zones
+                WHERE zone_id = :zone
+                  AND status = 'ACTIVE'
+                  AND current_occupied < total_capacity
+            """), {"zone": zone}).mappings().first()
+        else:
+            z = db.execute(text("""
+                SELECT *
+                FROM parking_zones
+                WHERE status = 'ACTIVE'
+                  AND current_occupied < total_capacity
+                ORDER BY zone_id
+                LIMIT 1
+            """)).mappings().first()
+
+        if not z:
+            raise HTTPException(status_code=400, detail="No available zone")
+
+        zone_id = z["zone_id"]
+
+        # Insert vehicle
         vehicle_id = db.execute(text("""
             INSERT INTO vehicles (vehicle_number, vehicle_type_id)
             VALUES (:number, :type)
@@ -308,29 +207,28 @@ def enter_vehicle(payload: dict = Body(...)):
             "type": vehicle_type_id
         }).scalar()
 
-        # 5️⃣ Generate ticket
+        # Insert ticket
         ticket_code = f"TKT-{int(datetime.now().timestamp())}"
 
         db.execute(text("""
             INSERT INTO parking_tickets
             (ticket_code, vehicle_id, zone_id, entry_time, slot)
-            VALUES (:code, :vehicle_id, :zone_id, :time, :slot)
+            VALUES (:code, :vehicle_id, :zone_id, NOW(), :slot)
         """), {
             "code": ticket_code,
             "vehicle_id": vehicle_id,
             "zone_id": zone_id,
-            "time": datetime.now(),
             "slot": slot
         })
 
-        # 6️⃣ UPDATE ZONE OCCUPANCY ❗❗❗
+        # Update zone occupancy
         db.execute(text("""
             UPDATE parking_zones
             SET current_occupied = current_occupied + 1
             WHERE zone_id = :zone_id
         """), {"zone_id": zone_id})
 
-        # 7️⃣ UPDATE VEHICLE TYPE COUNT ❗❗❗
+        # Update vehicle type count
         db.execute(text("""
             UPDATE zone_type_limits
             SET current_count = current_count + 1
@@ -352,9 +250,12 @@ def enter_vehicle(payload: dict = Body(...)):
 
     except Exception as e:
         db.rollback()
-        raise
+        print("❌ ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         db.close()
+
 
 # ================== SNAPSHOT API ==================
 @app.post("/api/snapshot")
