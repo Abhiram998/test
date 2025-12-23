@@ -143,6 +143,7 @@ from fastapi import Body
 
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...)):
+    print("🔥 /api/enter CALLED")
     db = get_db()
     try:
         vehicle = payload.get("vehicle")
