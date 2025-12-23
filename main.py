@@ -46,7 +46,8 @@ def health():
 # ================== LIVE DASHBOARD ==================
 @app.get("/api/zones")
 def get_zones():
-    db = get_db()
+    db = next(get_db())
+
     try:
         rows = db.execute(text("""
             SELECT
@@ -89,7 +90,8 @@ def get_zones():
 # ================== LIVE VEHICLES IN A ZONE ==================
 @app.get("/api/zones/{zone_id}/vehicles")
 def get_zone_vehicles(zone_id: str):
-    db = get_db()
+    db = next(get_db())
+
     try:
         rows = db.execute(text("""
             SELECT
@@ -123,7 +125,8 @@ from fastapi import Body
 
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...)):
-    db = get_db()
+    db = next(get_db())
+
     try:
         vehicle = payload.get("vehicle")
         vtype_raw = payload.get("type", "light")
@@ -235,7 +238,8 @@ def enter_vehicle(payload: dict = Body(...)):
 
 @app.get("/api/search/vehicle")
 def search_vehicle(number: str):
-    db = get_db()
+    db = next(get_db())
+
     try:
         row = db.execute(text("""
             SELECT
@@ -264,7 +268,8 @@ def search_vehicle(number: str):
 # ================== SNAPSHOT API ==================
 @app.post("/api/snapshot")
 def save_snapshot():
-    db = get_db()
+    db = next(get_db())
+
     try:
         rows = db.execute(text("""
             SELECT
@@ -307,7 +312,8 @@ def save_snapshot():
 # ================== LIST SNAPSHOTS (BACKUP PAGE) ==================
 @app.get("/api/snapshots")
 def list_snapshots():
-    db = get_db()
+    db = next(get_db())
+
     try:
         rows = db.execute(text("""
             SELECT
@@ -333,7 +339,8 @@ def list_snapshots():
 # ================== QUICK RECOVERY ==================
 @app.post("/api/restore/latest")
 def restore_latest_snapshot():
-    db = get_db()
+    db = next(get_db())
+
     try:
         snapshot = db.execute(text("""
             SELECT *
@@ -380,7 +387,8 @@ def restore_latest_snapshot():
 # ================== REPORT API ==================
 @app.get("/api/reports")
 def get_reports(date: str, zone: str = "ALL"):
-    db = get_db()
+    db = next(get_db())
+
     try:
         query = """
             SELECT *
@@ -401,7 +409,8 @@ def get_reports(date: str, zone: str = "ALL"):
     # ================== MONTHLY REPORT ==================
 @app.get("/api/reports/monthly")
 def get_monthly_report(year: int, month: int, zone: str = "ALL"):
-    db = get_db()
+    db = next(get_db())
+
     try:
         query = """
             SELECT
@@ -432,7 +441,8 @@ def get_monthly_report(year: int, month: int, zone: str = "ALL"):
 # ================== YEARLY REPORT ==================
 @app.get("/api/reports/yearly")
 def get_yearly_report(year: int, zone: str = "ALL"):
-    db = get_db()
+    db = next(get_db())
+
     try:
         query = """
             SELECT
