@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime
+from db import get_db
 import os
 
 # ================== ENV ==================
@@ -19,26 +20,6 @@ if DATABASE_URL:
     print("✅ DATABASE_URL detected")
 else:
     print("⚠️ DATABASE_URL missing (healthcheck will still pass)")
-
-# ================== DB (LAZY CONNECTION) ==================
-engine = None
-SessionLocal = None
-
-def get_db():
-    global engine, SessionLocal
-    if not DATABASE_URL:
-        raise HTTPException(status_code=503, detail="Database not configured")
-
-    if engine is None:
-        engine = create_engine(
-            DATABASE_URL,
-            pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=10,
-        )
-        SessionLocal = sessionmaker(bind=engine)
-
-    return SessionLocal()
 
 # ================== APP ==================
 app = FastAPI(title="Nilakkal Parking Backend")
