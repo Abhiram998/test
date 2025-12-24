@@ -76,6 +76,11 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     zonesRef.current = zones;
   }, [zones]);
 
+  useEffect(() => {
+  console.log("🔄 ZONES UPDATED FROM BACKEND", zones);
+}, [zones]);
+
+
   // ================================
 // LOAD ZONES FROM BACKEND (SOURCE OF TRUTH)
 // ================================
