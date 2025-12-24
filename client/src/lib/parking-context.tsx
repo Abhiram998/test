@@ -1,4 +1,4 @@
-import { apiGet } from "./api";
+import { apiGet, apiPost } from "./api";
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { appendEvent, saveLatestSnapshot, loadLatestSnapshotPayload, rebuildStateFromEvents, VehicleRecord } from '@/utils/persistence';
 
@@ -69,12 +69,36 @@ const INITIAL_ZONES: ParkingZone[] = Array.from({ length: ZONES_COUNT }, (_, i) 
 });
 
 export function ParkingProvider({ children }: { children: React.ReactNode }) {
-  const [zones, setZones] = useState<ParkingZone[]>(INITIAL_ZONES);
+  const [zones, setZones] = useState<ParkingZone[]>([]);
   const zonesRef = useRef(zones); // Ref to access latest zones in intervals/handlers
 
   useEffect(() => {
     zonesRef.current = zones;
   }, [zones]);
+
+  // ================================
+// LOAD ZONES FROM BACKEND (SOURCE OF TRUTH)
+// ================================
+useEffect(() => {
+  const loadZones = async () => {
+    try {
+      const data = await apiGet<ParkingZone[]>("/api/zones");
+
+      // Backend does not send vehicles list → normalize
+      const normalized = data.map(z => ({
+        ...z,
+        vehicles: [],
+      }));
+
+      setZones(normalized);
+    } catch (err) {
+      console.error("❌ Failed to load zones from backend", err);
+    }
+  };
+
+  loadZones();
+}, []);
+
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [admins, setAdmins] = useState([
@@ -247,74 +271,57 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
   }, []);
   */
 
-  const enterVehicle = (vehicleNumber: string, type: VehicleType = 'light', zoneId?: string, slot?: string) => {
-    let targetZoneIndex = -1;
-
-    if (zoneId) {
-      targetZoneIndex = zones.findIndex(z => z.id === zoneId);
-      if (targetZoneIndex !== -1) {
-        const zone = zones[targetZoneIndex];
-        if (zone.occupied >= zone.capacity) {
-          return { success: false, message: `Zone ${zone.name} is full!` };
-        }
-        if (zone.stats[type] >= zone.limits[type]) {
-           return { success: false, message: `Zone ${zone.name} is full for ${type} vehicles!` };
-        }
-      }
-    } else {
-      // Find first available zone that has capacity AND type capacity
-      targetZoneIndex = zones.findIndex(z => z.occupied < z.capacity && z.stats[type] < z.limits[type]);
-    }
-    
-    if (targetZoneIndex === -1) {
-      return { success: false, message: zoneId ? "Zone not found or full!" : `All parking zones are full for ${type} vehicles!` };
-    }
-
-    const zone = zones[targetZoneIndex];
-    const ticketId = `TKT-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-    const newVehicle: Vehicle = {
-      number: vehicleNumber,
-      entryTime: new Date(),
-      zoneId: zone.id,
-      ticketId,
+const enterVehicle = async (
+  vehicleNumber: string,
+  type: VehicleType = "light",
+  zoneId?: string,
+  slot?: string
+) => {
+  try {
+    // 1️⃣ Call backend (REAL source of truth)
+    const res = await apiPost<{
+      success: boolean;
+      ticket: string;
+      zone: string;
+      vehicle: string;
+    }>("/api/enter", {
+      vehicle: vehicleNumber,
       type,
-      slot
-    };
+      zone: zoneId,
+      slot,
+    });
 
-    const updatedZones = [...zones];
-    updatedZones[targetZoneIndex] = {
-      ...zone,
-      occupied: zone.occupied + 1,
-      vehicles: [newVehicle, ...zone.vehicles],
-      stats: {
-        ...zone.stats,
-        [type]: zone.stats[type] + 1
-      }
-    };
+    if (!res.success) {
+      return { success: false, message: "Entry failed" };
+    }
 
-    setZones(updatedZones);
+    // 2️⃣ Re-fetch zones AFTER successful entry
+    const freshZones = await apiGet<ParkingZone[]>("/api/zones");
 
-    // Persistence: Append event
-    appendEvent({
-      plate: vehicleNumber,
-      zone: zone.name,
-      timeIn: new Date().toISOString(),
-      timeOut: null,
-      type
-    }).catch(e => console.error("Failed to persist event", e));
+    setZones(
+      freshZones.map(z => ({
+        ...z,
+        vehicles: [],
+      }))
+    );
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       ticket: {
         vehicleNumber,
-        zoneName: zone.name,
-        ticketId,
+        ticketId: res.ticket,
+        zoneName: res.zone,
         time: new Date().toLocaleTimeString(),
         type,
-        slot
-      }
+        slot,
+      },
     };
-  };
+  } catch (err: any) {
+    console.error("❌ ENTER VEHICLE FAILED", err);
+    return { success: false, message: err.message };
+  }
+};
+
 
   const totalCapacity = zones.reduce((acc, z) => acc + z.capacity, 0);
   const totalOccupied = zones.reduce((acc, z) => acc + z.occupied, 0);
