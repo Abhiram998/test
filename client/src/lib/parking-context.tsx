@@ -287,8 +287,6 @@ const enterVehicle = async (
     const res = await apiPost<{
       success: boolean;
       ticket: string;
-      zone: string;
-      vehicle: string;
     }>("/api/enter", {
       vehicle: vehicleNumber,
       type,
@@ -303,10 +301,11 @@ const enterVehicle = async (
     // 2️⃣ Re-fetch zones AFTER successful entry
     const freshZones = await apiGet<ParkingZone[]>("/api/zones");
 
+    // 3️⃣ Update UI from backend data
     setZones(
       freshZones.map(z => ({
         ...z,
-        vehicles: [],
+        vehicles: [], // vehicles come from /zones/{id}/vehicles
       }))
     );
 
@@ -315,7 +314,6 @@ const enterVehicle = async (
       ticket: {
         vehicleNumber,
         ticketId: res.ticket,
-        zoneName: res.zone,
         time: new Date().toLocaleTimeString(),
         type,
         slot,
