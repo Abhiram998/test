@@ -135,6 +135,69 @@ def get_zones(db: Session = Depends(get_db)):
 
     return list(zones.values())
 
+# ================== ADMIN: CREATE ZONE ==================
+@app.post("/api/admin/zones")
+def create_zone(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Creates a new parking zone and its associated vehicle type limits atomically.
+    Calculates total capacity automatically.
+    """
+    try:
+        name = payload.get("name")
+        limits = payload.get("limits")  # { heavy: int, medium: int, light: int }
+
+        if not name or not limits:
+            raise HTTPException(400, "Zone name and vehicle limits are required")
+
+        # Parse and validate numbers
+        heavy = max(0, int(limits.get("heavy", 0)))
+        medium = max(0, int(limits.get("medium", 0)))
+        light = max(0, int(limits.get("light", 0)))
+        total = heavy + medium + light
+
+        if total <= 0:
+            raise HTTPException(400, "Total capacity must be greater than zero")
+
+        # 1. Generate next sequential ID (Z1, Z2, Z3...)
+        zone_no = db.execute(text("""
+            SELECT COALESCE(MAX(CAST(SUBSTRING(zone_id, 2) AS INT)), 0) + 1 
+            FROM parking_zones
+        """)).scalar()
+        zone_id = f"Z{zone_no}"
+
+        # 2. Insert main zone record
+        db.execute(text("""
+            INSERT INTO parking_zones(zone_id, zone_name, total_capacity, current_occupied, status)
+            VALUES (:id, :name, :cap, 0, 'ACTIVE')
+        """), {
+            "id": zone_id,
+            "name": name,
+            "cap": total
+        })
+
+        # 3. Get vehicle type IDs and insert limits
+        type_ids = dict(db.execute(
+            text("SELECT type_name, id FROM vehicle_types")
+        ).fetchall())
+
+        for t_name, max_v in [("Heavy", heavy), ("Medium", medium), ("Light", light)]:
+            if t_name in type_ids:
+                db.execute(text("""
+                    INSERT INTO zone_type_limits(zone_id, vehicle_type_id, max_vehicles, current_count)
+                    VALUES (:z, :t, :m, 0)
+                """), {
+                    "z": zone_id,
+                    "t": type_ids[t_name],
+                    "m": max_v
+                })
+
+        db.commit()
+        return {"success": True, "zoneId": zone_id, "totalCapacity": total}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to create zone: {str(e)}")
+
 # ================== LIVE VEHICLES ==================
 @app.get("/api/zones/{zone_id}/vehicles")
 def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
