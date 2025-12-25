@@ -33,15 +33,12 @@ import { useToast } from "@/hooks/use-toast";
 /* ================= TYPES ================= */
 
 type ReportRow = {
-  id: number;
-  snapshot_time: string;
-  zone_id: string;
-  zone_name: string;
-  capacity: number;
-  occupied: number;
-  heavy: number;
-  medium: number;
-  light: number;
+  ticketId: string;
+  vehicle: string;
+  type: "Light" | "Medium" | "Heavy";
+  zone: string;
+  entryTime: string;
+  exitTime: string | null;
 };
 
 /* ================= COMPONENT ================= */
@@ -50,61 +47,46 @@ export default function Report() {
   const { toast } = useToast();
 
   const [date, setDate] = useState<Date | undefined>(new Date());
-  const [selectedZoneId, setSelectedZoneId] = useState("all");
+  const [selectedZone, setSelectedZone] = useState<string>("All Zones");
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [reportType, setReportType] = useState<"daily" | "monthly" | "yearly">("daily");
-
 
   /* ================= FETCH REPORTS ================= */
 
-useEffect(() => {
-  if (!date) return;
+  useEffect(() => {
+    if (!date) return;
 
-  setLoading(true);
+    setLoading(true);
 
-  let url = "";
+    const params = new URLSearchParams();
+    params.append("report_date", format(date, "yyyy-MM-dd"));
 
-  if (reportType === "daily") {
-    url = `/api/reports?date=${format(date, "yyyy-MM-dd")}`;
-  }
+    if (selectedZone !== "All Zones") {
+      params.append("zone", selectedZone);
+    }
 
-  if (reportType === "monthly") {
-    url = `/api/reports/monthly?year=${date.getFullYear()}&month=${date.getMonth() + 1}`;
-  }
+    apiGet<ReportRow[]>(`/api/reports?${params.toString()}`)
+      .then(setReports)
+      .catch(() => {
+        toast({
+          variant: "destructive",
+          title: "Failed to load report",
+          description: "Could not fetch report data from server",
+        });
+      })
+      .finally(() => setLoading(false));
+  }, [date, selectedZone]);
 
-  if (reportType === "yearly") {
-    url = `/api/reports/yearly?year=${date.getFullYear()}`;
-  }
-
-  apiGet<ReportRow[]>(url)
-    .then(setReports)
-    .catch(() => {
-      toast({
-        variant: "destructive",
-        title: "Failed to load report",
-        description: "Could not fetch report data from server",
-      });
-    })
-    .finally(() => setLoading(false));
-}, [date, reportType]);
-
-  /* ================= FILTER ================= */
-
-  const filteredReports = reports.filter(
-    (r) => selectedZoneId === "all" || r.zone_id === selectedZoneId
-  );
-
-  /* ================= DOWNLOAD ================= */
+  /* ================= CSV DOWNLOAD ================= */
 
   const downloadCSV = (rows: ReportRow[], filename: string) => {
     const header =
-      "Zone,Capacity,Occupied,Heavy,Medium,Light,Snapshot Time\n";
+      "Ticket ID,Vehicle,Type,Zone,Entry Time,Exit Time\n";
 
     const body = rows
       .map(
         (r) =>
-          `${r.zone_name},${r.capacity},${r.occupied},${r.heavy},${r.medium},${r.light},${r.snapshot_time}`
+          `${r.ticketId},${r.vehicle},${r.type},${r.zone},${r.entryTime},${r.exitTime ?? ""}`
       )
       .join("\n");
 
@@ -121,7 +103,7 @@ useEffect(() => {
 
   const handleDownloadCurrent = () => {
     downloadCSV(
-      filteredReports,
+      reports,
       `parking_report_${format(new Date(), "yyyy-MM-dd")}.csv`
     );
 
@@ -131,24 +113,10 @@ useEffect(() => {
     });
   };
 
-  const handleDownloadFiltered = () => {
-    if (!date) return;
-
-    downloadCSV(
-      filteredReports,
-      `parking_report_${selectedZoneId}_${format(date, "yyyy-MM-dd")}.csv`
-    );
-
-    toast({
-      title: "Filtered report downloaded",
-      description: "Custom report CSV generated",
-    });
-  };
-
   /* ================= UNIQUE ZONES ================= */
 
   const uniqueZones = Array.from(
-    new Map(reports.map((r) => [r.zone_id, r.zone_name]))
+    new Set(reports.map((r) => r.zone))
   );
 
   /* ================= UI ================= */
@@ -160,7 +128,7 @@ useEffect(() => {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
           <p className="text-muted-foreground">
-            Generate and download parking analytics.
+            Vehicle entry & exit history.
           </p>
         </div>
 
@@ -175,7 +143,7 @@ useEffect(() => {
         <CardHeader>
           <CardTitle>Filter Reports</CardTitle>
           <CardDescription>
-            Select zone and date to view specific records.
+            Filter by zone and entry date.
           </CardDescription>
         </CardHeader>
 
@@ -184,18 +152,15 @@ useEffect(() => {
             {/* ZONE */}
             <div className="grid w-full md:w-[200px] gap-2">
               <label className="text-sm font-medium">Zone</label>
-              <Select
-                value={selectedZoneId}
-                onValueChange={setSelectedZoneId}
-              >
+              <Select value={selectedZone} onValueChange={setSelectedZone}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select Zone" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Zones</SelectItem>
-                  {uniqueZones.map(([id, name]) => (
-                    <SelectItem key={id} value={id}>
-                      {name}
+                  <SelectItem value="All Zones">All Zones</SelectItem>
+                  {uniqueZones.map((z) => (
+                    <SelectItem key={z} value={z}>
+                      {z}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -228,15 +193,6 @@ useEffect(() => {
                 </PopoverContent>
               </Popover>
             </div>
-
-            <Button
-              variant="secondary"
-              onClick={handleDownloadFiltered}
-              className="gap-2"
-            >
-              <FileText className="w-4 h-4" />
-              Download Selected
-            </Button>
           </div>
         </CardContent>
       </Card>
@@ -250,7 +206,7 @@ useEffect(() => {
         <CardContent>
           {loading ? (
             <div className="text-center py-12">Loading report...</div>
-          ) : filteredReports.length === 0 ? (
+          ) : reports.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
               No records found for the selected criteria
             </div>
@@ -260,27 +216,29 @@ useEffect(() => {
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="p-4">#</th>
+                    <th className="p-4">Ticket</th>
+                    <th className="p-4">Vehicle</th>
+                    <th className="p-4">Type</th>
                     <th className="p-4">Zone</th>
-                    <th className="p-4">Capacity</th>
-                    <th className="p-4">Occupied</th>
-                    <th className="p-4">Heavy</th>
-                    <th className="p-4">Medium</th>
-                    <th className="p-4">Light</th>
-                    <th className="p-4 text-right">Time</th>
+                    <th className="p-4">Entry Time</th>
+                    <th className="p-4">Exit Time</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredReports.map((r, i) => (
-                    <tr key={r.id} className="border-b">
+                  {reports.map((r, i) => (
+                    <tr key={r.ticketId} className="border-b">
                       <td className="p-4">{i + 1}</td>
-                      <td className="p-4 font-medium">{r.zone_name}</td>
-                      <td className="p-4">{r.capacity}</td>
-                      <td className="p-4">{r.occupied}</td>
-                      <td className="p-4">{r.heavy}</td>
-                      <td className="p-4">{r.medium}</td>
-                      <td className="p-4">{r.light}</td>
-                      <td className="p-4 text-right font-mono">
-                        {new Date(r.snapshot_time).toLocaleTimeString()}
+                      <td className="p-4 font-mono">{r.ticketId}</td>
+                      <td className="p-4">{r.vehicle}</td>
+                      <td className="p-4">{r.type}</td>
+                      <td className="p-4">{r.zone}</td>
+                      <td className="p-4 font-mono">
+                        {new Date(r.entryTime).toLocaleString()}
+                      </td>
+                      <td className="p-4 font-mono">
+                        {r.exitTime
+                          ? new Date(r.exitTime).toLocaleString()
+                          : "Inside"}
                       </td>
                     </tr>
                   ))}
