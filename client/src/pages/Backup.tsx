@@ -4,7 +4,7 @@ import PoliceBackup, { VehicleRecord } from "@/components/PoliceBackup";
 import { Link } from "wouter";
 import { ArrowLeft, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 /* ================= TYPES ================= */
@@ -28,9 +28,15 @@ export default function Backup() {
   const loadSnapshots = async () => {
     setLoading(true);
     try {
+      // Fetches history to display the count in the black header
       const data = await apiGet<SnapshotMeta[]>("/api/snapshots");
-      setSnapshots(data);
-    } catch {
+      if (data && Array.isArray(data)) {
+        setSnapshots(data);
+      } else {
+        setSnapshots([]);
+      }
+    } catch (err) {
+      // This handles the server sync error specifically
       toast({
         variant: "destructive",
         title: "Failed to load backups",
@@ -46,7 +52,10 @@ export default function Backup() {
   }, []);
 
   /* ================= GET RECORDS (FOR RESTORE) ================= */
-
+  /**
+   * This function is passed to PoliceBackup. 
+   * It fetches the data that will be used to restore the system state.
+   */
   const getRecords = async (): Promise<VehicleRecord[]> => {
     const today = new Date().toISOString().slice(0, 10);
     const rows = await apiGet<any[]>(`/api/reports?date=${today}`);
@@ -69,7 +78,8 @@ export default function Backup() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* HEADER */}
+      
+      {/* HEADER SECTION */}
       <div className="flex items-center gap-4 mb-2">
         <Link href="/admin">
           <Button variant="ghost" size="icon">
@@ -79,26 +89,35 @@ export default function Backup() {
 
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Database className="w-6 h-6" />
+            <Database className="w-6 h-6 text-blue-500" />
             System Backup
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             Manage local backups and data restoration.
           </p>
         </div>
       </div>
 
-      {/* BACKUP PANEL */}
+      {/* PRIMARY BACKUP PANEL (The "Black Box") */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        {/* TOP SECTION: Information only (Redundant button removed) */}
-        <div className="text-sm text-zinc-400">
-          {snapshots.length === 0
-            ? "No backups available"
-            : `${snapshots.length} backups available`}
+        {/* SNAPSHOT COUNTER 
+            The first button was removed from here to keep the UI clean 
+        */}
+        <div className="text-sm text-zinc-400 font-medium">
+          {loading ? (
+            "Syncing with server..."
+          ) : snapshots.length === 0 ? (
+            "No backups available"
+          ) : (
+            `${snapshots.length} backups available`
+          )}
         </div>
 
-        {/* RESTORE PANEL (Main functional area) */}
+        {/* RESTORE & SNAPSHOT HUB
+            PoliceBackup component handles the "Save Snapshot" and "Quick Recovery" 
+            internally, ensuring there is only ONE button for each action.
+        */}
         <div className="pt-2">
           <PoliceBackup
             getRecords={getRecords}
@@ -107,6 +126,11 @@ export default function Backup() {
           />
         </div>
       </div>
+
+      {/* FOOTER INFO */}
+      <p className="text-[11px] text-zinc-500 px-2 italic">
+        * Snapshots are stored securely on the central server and can be used to recover the system in case of local data loss.
+      </p>
     </div>
   );
 }
