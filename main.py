@@ -158,24 +158,40 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
     """), {"zone_id": zone_id}).mappings().all()
     return rows
 
-# ================== VEHICLE SEARCH (ADDED FIX) ==================
+# ================== VEHICLE SEARCH (FUZZY MATCH FIX) ==================
 @app.get("/api/search")
 def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
-    """Search for an active vehicle by plate number (fuzzy match)."""
-    search_term = q.strip().replace(" ", "").upper()
+    """
+    Improved search: 
+    1. Removes all hyphens and spaces from the user input.
+    2. Removes all hyphens and spaces from the database records during comparison.
+    """
+    # Clean the user's input: "KL-39-F-5003" becomes "KL39F5003"
+    search_term = q.strip().replace("-", "").replace(" ", "").upper()
+    
     row = db.execute(text("""
-        SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
+        SELECT 
+            v.vehicle_number AS vehicle, 
+            pt.ticket_code, 
+            pt.entry_time, 
+            z.zone_name
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN parking_zones z ON pt.zone_id = z.zone_id
-        WHERE REPLACE(UPPER(v.vehicle_number), ' ', '') LIKE :q 
+        WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q 
           AND pt.exit_time IS NULL
         LIMIT 1
     """), {"q": f"%{search_term}%"}).mappings().first()
     
     if not row:
-        raise HTTPException(404, "Vehicle not found")
-    return dict(row)
+        raise HTTPException(404, "Vehicle not currently parked")
+        
+    return {
+        "vehicle": row["vehicle"],
+        "ticket_code": row["ticket_code"],
+        "entry_time": row["entry_time"].isoformat() if row["entry_time"] else None,
+        "zone_name": row["zone_name"]
+    }
 
 # ================== ENTER VEHICLE ==================
 @app.post("/api/enter")
