@@ -28,15 +28,18 @@ export default function Backup() {
   const loadSnapshots = async () => {
     setLoading(true);
     try {
-      // Fetches history to display the count in the black header
+      // 1. Ensure this endpoint matches your backend route exactly
       const data = await apiGet<SnapshotMeta[]>("/api/snapshots");
+      
+      // 2. Only update state if data is an actual array
       if (data && Array.isArray(data)) {
         setSnapshots(data);
       } else {
         setSnapshots([]);
       }
     } catch (err) {
-      // This handles the server sync error specifically
+      // This catch block is what triggers the red toast in your image
+      console.error("Fetch error:", err);
       toast({
         variant: "destructive",
         title: "Failed to load backups",
@@ -52,10 +55,7 @@ export default function Backup() {
   }, []);
 
   /* ================= GET RECORDS (FOR RESTORE) ================= */
-  /**
-   * This function is passed to PoliceBackup. 
-   * It fetches the data that will be used to restore the system state.
-   */
+
   const getRecords = async (): Promise<VehicleRecord[]> => {
     const today = new Date().toISOString().slice(0, 10);
     const rows = await apiGet<any[]>(`/api/reports?date=${today}`);
@@ -65,12 +65,7 @@ export default function Backup() {
       zone: r.zone_name,
       timeIn: r.snapshot_time,
       timeOut: null,
-      type:
-        r.heavy > 0
-          ? "heavy"
-          : r.medium > 0
-          ? "medium"
-          : "light",
+      type: r.heavy > 0 ? "heavy" : r.medium > 0 ? "medium" : "light",
     }));
   };
 
@@ -98,26 +93,21 @@ export default function Backup() {
         </div>
       </div>
 
-      {/* PRIMARY BACKUP PANEL (The "Black Box") */}
+      {/* PRIMARY BACKUP PANEL (The Black Box) */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        {/* SNAPSHOT COUNTER 
-            The first button was removed from here to keep the UI clean 
-        */}
+        {/* SNAPSHOT COUNTER (Button removed to match your edited-image.png) */}
         <div className="text-sm text-zinc-400 font-medium">
           {loading ? (
-            "Syncing with server..."
+            "Syncing..."
           ) : snapshots.length === 0 ? (
             "No backups available"
           ) : (
-            `${snapshots.length} backups available`
+            `${snapshots.length} backups available on server`
           )}
         </div>
 
-        {/* RESTORE & SNAPSHOT HUB
-            PoliceBackup component handles the "Save Snapshot" and "Quick Recovery" 
-            internally, ensuring there is only ONE button for each action.
-        */}
+        {/* MAIN COMPONENT AREA */}
         <div className="pt-2">
           <PoliceBackup
             getRecords={getRecords}
@@ -127,7 +117,6 @@ export default function Backup() {
         </div>
       </div>
 
-      {/* FOOTER INFO */}
       <p className="text-[11px] text-zinc-500 px-2 italic">
         * Snapshots are stored securely on the central server and can be used to recover the system in case of local data loss.
       </p>
