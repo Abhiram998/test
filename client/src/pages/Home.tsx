@@ -1,23 +1,14 @@
 import { VehicleType } from "@/lib/parking-context";
 import { ZoneCard } from "@/components/parking/ZoneCard";
-import { 
-  MapPin, 
-  Search, 
-  MoreHorizontal, 
-  Activity, 
-  Ticket, 
-  Plus, 
-  Settings2, 
-  Trash2, 
-  Edit3,
-  X
-} from "lucide-react";
+import { MapPin, Search, MoreHorizontal, Activity, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { apiGet, apiPost, apiDelete, apiPatch } from "@/lib/api";
-import { useParking } from "@/lib/parking-context";
+import { apiGet, apiPost } from "@/lib/api";
+import { useEffect } from "react";
+import { useParking } from "@/lib/parking-context"; // 🔹 Added this import
 
 import {
   Dialog,
@@ -25,7 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
@@ -41,8 +31,6 @@ import {
 } from 'recharts';
 
 import logo from "@/assets/kerala-police-logo.jpg";
-
-// --- Types ---
 
 type Zone = {
   id: string;
@@ -76,24 +64,28 @@ type VehicleSearchResult = {
   entry_time: string;
 };
 
-export default function Home() {
-  const { isAdmin } = useParking();
-  const { toast } = useToast();
 
-  // --- State Management ---
+export default function Home() {
+  // 🔐 FIXED: Now using the real global state instead of hardcoded true
+  const { isAdmin } = useParking();
+
+  // 🔹 Zones from backend API
   const [zones, setZones] = useState<Zone[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<VehicleSearchResult | null>(null);
+
+  // 🔹 Derived totals
+  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
+  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
+
+  const { toast } = useToast();
+  
+  // Calculate vacancy
+  const totalVacancy = totalCapacity - totalOccupied;
+  
+  // State for interactive graph
   const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
 
-  // Dialog Controls
+  // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
-  const [isCreateZoneOpen, setIsCreateZoneOpen] = useState(false);
-  const [isEditZoneOpen, setIsEditZoneOpen] = useState(false);
-  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
-
-  // Form Data
   const [ticketData, setTicketData] = useState({
     vehicleNumber: "",
     zoneId: "",
@@ -101,136 +93,95 @@ export default function Home() {
     type: "light" as VehicleType
   });
 
-  const [zoneFormData, setZoneFormData] = useState({
-    name: "",
-    heavy: 0,
-    medium: 0,
-    light: 0
-  });
-
-  // --- Data Fetching ---
-  const fetchZones = async () => {
-    try {
-      const data = await apiGet<Zone[]>("/api/zones");
-      setZones(data);
-    } catch (err) {
-      console.error("Failed to load zones", err);
-    }
-  };
-
   useEffect(() => {
+    let isMounted = true;
+
+    const fetchZones = () => {
+      apiGet<Zone[]>("/api/zones")
+        .then((data) => {
+          if (isMounted) setZones(data);
+        })
+        .catch((err) => {
+          console.error("Failed to load zones", err);
+          toast({
+            variant: "destructive",
+            title: "API Error",
+            description: "Unable to load parking zones from server",
+          });
+        });
+    };
+
     fetchZones();
     const interval = setInterval(fetchZones, 5000);
-    return () => clearInterval(interval);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  // --- Derived Calculations ---
-  const totalCapacity = zones.reduce((sum, z) => sum + (z.capacity || 0), 0);
-  const totalOccupied = zones.reduce((sum, z) => sum + (z.occupied || 0), 0);
-  const totalVacancy = totalCapacity - totalOccupied;
-
-  // --- Handlers ---
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    try {
-      const result = await apiGet<VehicleSearchResult>(`/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`);
-      setSearchResult(result);
-    } catch {
-      setSearchResult(null);
-      toast({ variant: "destructive", title: "Not Found", description: "Vehicle not currently parked" });
-    }
-  };
 
   const handleGenerateTicket = async () => {
     if (!ticketData.vehicleNumber) {
-      toast({ variant: "destructive", title: "Error", description: "Please enter a vehicle number" });
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please enter a vehicle number",
+      });
       return;
     }
+
     try {
-      await apiPost("/api/enter", {
-        vehicle: ticketData.vehicleNumber,
-        type: ticketData.type,
-        zone: ticketData.zoneId || undefined,
-        slot: ticketData.slot || undefined,
+       await apiPost("/api/enter", {
+       vehicle: ticketData.vehicleNumber,
+       type: ticketData.type,
+       zone: ticketData.zoneId || undefined,
+       slot: ticketData.slot || undefined,
       });
-      toast({ title: "Ticket Generated", description: `Vehicle ${ticketData.vehicleNumber} successfully parked` });
+
+      toast({
+        title: "Ticket Generated",
+        description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
+      });
+
       setIsTicketOpen(false);
       setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
-      fetchZones();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Failed", description: err?.message || "Error generating ticket" });
-    }
-  };
+      apiGet<Zone[]>("/api/zones").then(setZones);
 
-  const handleCreateZone = async () => {
-    if (!zoneFormData.name) return;
-    try {
-      await apiPost("/api/zones", {
-        name: zoneFormData.name,
-        limits: { heavy: zoneFormData.heavy, medium: zoneFormData.medium, light: zoneFormData.light }
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Generation Failed",
+        description: err?.message || "Could not generate ticket",
       });
-      toast({ title: "Success", description: "New parking zone created" });
-      setIsCreateZoneOpen(false);
-      resetZoneForm();
-      fetchZones();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Error", description: "Failed to create zone" });
     }
   };
 
-  const handleUpdateZone = async () => {
-    if (!selectedZone) return;
-    try {
-      await apiPatch(`/api/zones/${selectedZone.id}`, {
-        name: zoneFormData.name,
-        limits: { heavy: zoneFormData.heavy, medium: zoneFormData.medium, light: zoneFormData.light }
-      });
-      toast({ title: "Updated", description: "Zone configuration saved" });
-      setIsEditZoneOpen(false);
-      fetchZones();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Update Failed", description: "Could not save changes" });
-    }
-  };
 
-  const handleDeleteZone = async () => {
-    if (!selectedZone) return;
-    try {
-      await apiDelete(`/api/zones/${selectedZone.id}`);
-      toast({ title: "Deleted", description: "Parking zone removed successfully" });
-      setIsDeleteConfirmOpen(false);
-      setSelectedZone(null);
-      fetchZones();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Delete Failed", description: "Zone contains vehicles or server error" });
-    }
-  };
-
-  const resetZoneForm = () => {
-    setZoneFormData({ name: "", heavy: 10, medium: 20, light: 50 });
-  };
-
-  const openEditDialog = (zone: Zone) => {
-    setSelectedZone(zone);
-    setZoneFormData({
-      name: zone.name,
-      heavy: zone.limits.heavy,
-      medium: zone.limits.medium,
-      light: zone.limits.light
-    });
-    setIsEditZoneOpen(true);
-  };
-
-  // --- Chart Data Formatting ---
+  // Chart Data Preparation
   const barChartData = zones.map(zone => {
-    const calc = (cur: number, lim: number) => (lim > 0 ? (cur / lim) * 100 : 0);
+    let heavyPct = 0;
+    let mediumPct = 0;
+    let lightPct = 0;
+
+    if (zone.limits) {
+       heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
+       mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
+       lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
+    } else {
+       heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
+       mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
+       lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
+    }
+
     return {
       name: zone.name.replace('Nilakkal Parking Zone ', 'P'),
-      Heavy: calc(zone.stats.heavy, zone.limits?.heavy || zone.capacity),
-      Medium: calc(zone.stats.medium, zone.limits?.medium || zone.capacity),
-      Light: calc(zone.stats.light, zone.limits?.light || zone.capacity),
+      Heavy: heavyPct,
+      Medium: mediumPct,
+      Light: lightPct,
+      occupied: zone.occupied,
+      capacity: zone.capacity,
+      limits: zone.limits, 
       originalZone: zone 
     };
   });
@@ -241,255 +192,338 @@ export default function Home() {
     light: zones.reduce((acc, z) => acc + z.stats.light, 0)
   };
 
+  const activeOccupied = hoveredZone ? hoveredZone.occupied : totalOccupied;
+  const activeCapacity = hoveredZone ? hoveredZone.capacity : totalCapacity;
+  const activeOccupancyRate = activeCapacity > 0 ? Math.round((activeOccupied / activeCapacity) * 100) : 0;
+
   const pieData = [
     { name: 'Heavy', value: activeStats.heavy, color: '#1e293b' },
     { name: 'Medium', value: activeStats.medium, color: '#f59e0b' },
     { name: 'Light', value: activeStats.light, color: '#3b82f6' },
   ];
 
-  const activeOccupancyRate = totalCapacity > 0 ? Math.round((totalOccupied / totalCapacity) * 100) : 0;
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<any>(null);
 
-  // --- Sub-Components ---
-  const TopCard = ({ title, value, dark = false, isVacancy = false }: any) => (
-    <div className={`rounded-xl p-4 shadow-sm border transition-all ${dark ? 'bg-slate-900 text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
-      <div className="flex justify-between items-center">
-        <span className={`text-[10px] font-bold uppercase tracking-wider ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{title}</span>
-        <div className={`text-2xl font-black ${isVacancy ? 'text-emerald-500' : ''}`}>{value}</div>
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    try {
+      const result = await apiGet<VehicleSearchResult>(
+        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+      );
+      setSearchResult(result);
+    } catch {
+      setSearchResult(null);
+      toast({
+        variant: "destructive",
+        title: "Not Found",
+        description: "Vehicle not currently parked",
+      });
+    }
+  };
+
+
+  const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
+    <div className={`rounded-xl p-3 shadow-sm border relative overflow-hidden group hover:shadow-md transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
+      <div className="flex justify-between items-center mb-0">
+        <span className={`text-[10px] font-bold uppercase tracking-wider ${dark ? 'text-slate-300' : 'text-slate-500'}`}>{title}</span>
+        <div className={`text-xl font-bold ${isVacancy ? 'text-green-500' : ''}`}>
+          {value}
+        </div>
       </div>
+      {subValue && <div className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-400'}`}>{subValue}</div>}
     </div>
   );
 
   return (
-    <div className="space-y-6 pb-10">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-1">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
+        </div>
         <div className="flex items-center gap-4">
-          <img src={logo} alt="Logo" className="h-16 w-auto" />
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">NILAKKAL SMART PARKING</h1>
-            <p className="text-xs font-bold text-slate-500 uppercase">Real-time Traffic & Transit Management</p>
-          </div>
+           <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
+           <Button variant="ghost" size="icon" className="md:hidden">
+             <MoreHorizontal />
+           </Button>
         </div>
-        
-        {isAdmin && (
-          <div className="flex gap-2">
-            <Button onClick={() => setIsCreateZoneOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11 px-6 shadow-lg shadow-emerald-100">
-              <Plus className="w-5 h-5 mr-2" /> Add Zone
-            </Button>
-            <Button onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 px-6 shadow-lg shadow-blue-100">
-              <Ticket className="w-5 h-5 mr-2" /> New Ticket
-            </Button>
-          </div>
-        )}
       </div>
 
-      {/* KPI Dashboard */}
+      {/* Top Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <TopCard title="Available Slots" value={totalVacancy} dark={true} isVacancy={true} />
-        <TopCard title="Occupied Slots" value={totalOccupied} />
-        <TopCard title="Capacity" value={totalCapacity} />
+        <TopCard title="Vacancy" value={totalVacancy} dark={true} isVacancy={true} />
+        <TopCard title="Occupancy" value={totalOccupied} />
+        <TopCard title="Total Capacity" value={totalCapacity} />
         
-        <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 flex items-center gap-4">
-          <div className="w-16 h-16 relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart><Pie data={pieData} innerRadius={22} outerRadius={32} dataKey="value" stroke="none">
-                {pieData.map((e, i) => <Cell key={i} fill={e.color} />)}
-              </Pie></PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-black">{activeOccupancyRate}%</div>
-          </div>
-          <div className="flex-1">
-            <div className="text-[10px] font-bold text-slate-400 mb-1">LIVE COMPOSITION</div>
-            {pieData.map((item, i) => (
-              <div key={i} className="flex justify-between text-[10px] leading-tight">
-                <span className="text-slate-500 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full" style={{backgroundColor: item.color}}/>{item.name}</span>
-                <span className="font-bold">{item.value}</span>
-              </div>
-            ))}
-          </div>
+        <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 h-full flex items-center gap-3">
+           <div className="w-[70px] h-[70px] relative flex-shrink-0">
+             <ResponsiveContainer width="100%" height="100%">
+               <PieChart>
+                 <Pie
+                   data={pieData}
+                   innerRadius={25}
+                   outerRadius={35}
+                   paddingAngle={0}
+                   dataKey="value"
+                   stroke="none"
+                 >
+                   {pieData.map((entry, index) => (
+                     <Cell key={`cell-${index}`} fill={entry.color} />
+                   ))}
+                 </Pie>
+               </PieChart>
+             </ResponsiveContainer>
+             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-xs font-bold text-slate-700">{activeOccupancyRate}%</span>
+             </div>
+           </div>
+
+           <div className="flex-1 flex flex-col justify-center gap-1">
+             <div className="flex justify-between items-center border-b border-slate-50 pb-1 mb-1">
+               <span className="font-medium text-slate-500 text-xs">Composition</span>
+               <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">
+                 {hoveredZone ? `P${hoveredZone.name.replace('Nilakkal Parking Zone ', '')}` : "Total"}
+               </span>
+             </div>
+             
+             <div className="space-y-0.5">
+                {pieData.map((item, index) => (
+                   <div key={index} className="flex items-center justify-between text-[10px]">
+                      <div className="flex items-center gap-1">
+                         <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
+                         <span className="text-slate-500">{item.name}</span>
+                      </div>
+                      <span className="font-bold text-slate-700">{item.value}</span>
+                   </div>
+                ))}
+             </div>
+           </div>
         </div>
       </div>
 
-      {/* Analytics Chart */}
-      <div className="bg-white p-6 rounded-2xl shadow-xl border border-slate-100">
-        <div className="flex items-center justify-between mb-8">
-          <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-blue-600" /> OCCUPANCY METRICS PER ZONE (%)
-          </h3>
-          <div className="flex gap-4">
-            {pieData.map(d => <div key={d.name} className="flex items-center gap-2 text-[10px] font-bold text-slate-500">
-              <div className="w-2.5 h-2.5 rounded-sm" style={{backgroundColor: d.color}}/> {d.name.toUpperCase()}
-            </div>)}
-          </div>
-        </div>
-        <div className="h-[350px] w-full">
-          <ResponsiveContainer>
-            <BarChart data={barChartData} onMouseMove={(s:any) => s.activePayload && setHoveredZone(s.activePayload[0].payload.originalZone)} onMouseLeave={() => setHoveredZone(null)}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} unit="%" />
-              <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}} />
-              <Bar dataKey="Heavy" fill="#1e293b" radius={[6, 6, 0, 0]}><LabelList dataKey="Heavy" position="top" formatter={(v:any) => v > 0 ? `${Math.round(v)}%` : ''} style={{fontSize: 10, fontWeight: 800, fill: '#1e293b'}}/></Bar>
-              <Bar dataKey="Medium" fill="#f59e0b" radius={[6, 6, 0, 0]}><LabelList dataKey="Medium" position="top" formatter={(v:any) => v > 0 ? `${Math.round(v)}%` : ''} style={{fontSize: 10, fontWeight: 800, fill: '#f59e0b'}}/></Bar>
-              <Bar dataKey="Light" fill="#3b82f6" radius={[6, 6, 0, 0]}><LabelList dataKey="Light" position="top" formatter={(v:any) => v > 0 ? `${Math.round(v)}%` : ''} style={{fontSize: 10, fontWeight: 800, fill: '#3b82f6'}}/></Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Zone Management Section */}
-      <div className="space-y-4">
-        <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4 border-b border-slate-200 pb-4">
-          <div>
-            <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-red-500" /> ZONE INVENTORY
-            </h2>
-            <p className="text-xs text-slate-500">Manage capacities and vehicle distribution</p>
-          </div>
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 gap-6 h-full mt-2">
+        <div className="space-y-6">
           
-          <div className="flex gap-2">
-            {searchResult && (
-              <div className="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg border border-emerald-100 text-xs font-bold flex items-center gap-3">
-                {searchResult.vehicle_number} found in {searchResult.zone_name}
-                <X className="w-4 h-4 cursor-pointer" onClick={() => setSearchResult(null)} />
+          {/* Bar Chart Section */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-4">
+                <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
+                
+                {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
+                {isAdmin && (
+                  <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+                    <Ticket className="w-4 h-4" /> Generate Ticket
+                  </Button>
+                )}
               </div>
-            )}
-            <form onSubmit={handleSearch} className="flex gap-1">
-              <Input placeholder="Search Vehicle..." className="w-48 bg-white border-slate-200 h-10 font-medium" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-              <Button type="submit" className="bg-slate-900 text-white h-10 w-10 p-0"><Search className="w-4 h-4" /></Button>
-            </form>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-          {zones.map((zone) => (
-            <div key={zone.id} className="group relative">
-              <ZoneCard zone={zone} />
-              {isAdmin && (
-                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <Button size="icon" className="h-6 w-6 bg-white/90 text-slate-700 hover:bg-white" onClick={() => openEditDialog(zone)}>
-                    <Settings2 className="w-3 h-3" />
-                  </Button>
-                  <Button size="icon" variant="destructive" className="h-6 w-6" onClick={() => { setSelectedZone(zone); setIsDeleteConfirmOpen(true); }}>
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
-                </div>
-              )}
+              <div className="hidden md:flex items-center gap-6">
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Heavy</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#f59e0b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Medium</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#3b82f6] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Light</span>
+                 </div>
+              </div>
             </div>
-          ))}
+            
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={barChartData} 
+                  barSize={24} 
+                  margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
+                  onMouseMove={(state: any) => {
+                    if (state.activePayload) {
+                      setHoveredZone(state.activePayload[0].payload.originalZone);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredZone(null);
+                  }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
+                    dy={10} 
+                    interval={0} 
+                  />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#64748b', fontSize: 12}} 
+                    unit="%"
+                    domain={[0, 100]} 
+                    allowDataOverflow={true}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        const originalZone = data.originalZone;
+                        return (
+                          <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-lg text-sm">
+                            <p className="font-bold text-slate-800 mb-2">{label}</p>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#1e293b]"></div>
+                                  Heavy
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
+                                  Medium
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>
+                                  Light
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]} name="Heavy">
+                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
+                  </Bar>
+                  <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Medium">
+                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
+                  </Bar>
+                  <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Light">
+                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Bottom Section: Live Zone Overview & Search */}
+          <div className="space-y-4">
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                   <Activity className="w-5 h-5 text-orange-500" />
+                   <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
+                </div>
+
+                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
+                {isAdmin && (
+                   <div className="flex items-center gap-3">
+                      {searchResult && (
+                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
+                          <span className="font-bold">{searchResult.vehicle_number}</span>
+                          <span>in {searchResult.zone_name}</span>
+                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full" onClick={() => setSearchResult(null)}>×</Button>
+                        </div>
+                      )}
+                      <form onSubmit={handleSearch} className="flex gap-2">
+                          <Input 
+                              placeholder="Find Vehicle..." 
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              className="bg-white w-[180px] h-9 text-sm"
+                          />
+                          <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3">
+                            <Search className="w-3.5 h-3.5" />
+                          </Button>
+                      </form>
+                   </div>
+                )}
+             </div>
+             
+             <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
+                {zones.map((zone) => (
+                  <ZoneCard key={zone.id} zone={zone} />
+                ))}
+             </div>
+          </div>
+
         </div>
       </div>
 
-      {/* DIALOG: Create/Edit Zone (Modern Dark UI) */}
-      <Dialog open={isCreateZoneOpen || isEditZoneOpen} onOpenChange={(val) => { if(!val) { setIsCreateZoneOpen(false); setIsEditZoneOpen(false); resetZoneForm(); } }}>
-        <DialogContent className="sm:max-w-[450px] bg-[#0c111d] text-white border-slate-800 rounded-3xl p-8">
-          <DialogHeader>
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center mb-4">
-              <Settings2 className="w-6 h-6 text-emerald-500" />
-            </div>
-            <DialogTitle className="text-2xl font-black">{isEditZoneOpen ? 'Configure Zone' : 'Create New Zone'}</DialogTitle>
-            <DialogDescription className="text-slate-400">Set parking limits for different vehicle categories.</DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 py-6">
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Zone Identification</Label>
-              <Input value={zoneFormData.name} onChange={e => setZoneFormData({...zoneFormData, name: e.target.value})} className="bg-slate-900/50 border-slate-800 h-12 focus:ring-emerald-500" placeholder="e.g. North Entry P1" />
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              {[
-                { label: 'Heavy', key: 'heavy', color: 'bg-slate-700' },
-                { label: 'Medium', key: 'medium', color: 'bg-amber-500' },
-                { label: 'Light', key: 'light', color: 'bg-blue-500' }
-              ].map(type => (
-                <div key={type.key} className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-1.5">
-                    <div className={`w-1.5 h-1.5 rounded-full ${type.color}`} /> {type.label}
-                  </Label>
-                  <Input 
-                    type="number" 
-                    value={(zoneFormData as any)[type.key]} 
-                    onChange={e => setZoneFormData({...zoneFormData, [type.key]: parseInt(e.target.value) || 0})}
-                    className="bg-slate-900/50 border-slate-800 h-12 text-center font-bold"
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 flex justify-between items-center">
-              <span className="text-xs font-bold text-emerald-500 uppercase">Calculated Total Capacity</span>
-              <span className="text-2xl font-black text-emerald-400">{zoneFormData.heavy + zoneFormData.medium + zoneFormData.light}</span>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="ghost" onClick={() => { setIsCreateZoneOpen(false); setIsEditZoneOpen(false); }} className="text-slate-500 hover:text-white hover:bg-slate-800 font-bold">Discard</Button>
-            <Button onClick={isEditZoneOpen ? handleUpdateZone : handleCreateZone} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 font-black rounded-xl">
-              {isEditZoneOpen ? 'Save Changes' : 'Initialize Zone'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* DIALOG: Delete Confirmation */}
-      <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
-        <DialogContent className="sm:max-w-[400px] rounded-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-red-600 flex items-center gap-2">
-              <Trash2 className="w-5 h-5" /> Delete Zone?
-            </DialogTitle>
-            <DialogDescription className="pt-2">
-              This will permanently remove <strong>{selectedZone?.name}</strong>. You cannot delete a zone that currently has vehicles parked in it.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDeleteZone}>Confirm Delete</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* DIALOG: Ticket Generation (Existing Logic) */}
-      <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen}>
-        <DialogContent className="sm:max-w-[450px] rounded-3xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 font-black"><Ticket className="w-5 h-5" /> PARKING TICKET ENTRY</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-5 py-4">
-            <div className="space-y-2">
-              <Label className="font-bold text-xs uppercase text-slate-500">Vehicle Number</Label>
-              <Input placeholder="KL-01-AB-1234" value={ticketData.vehicleNumber} onChange={e => setTicketData({...ticketData, vehicleNumber: e.target.value.toUpperCase()})} className="h-12 text-lg font-bold tracking-widest border-2 focus:border-blue-500" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="font-bold text-xs uppercase text-slate-500">Vehicle Type</Label>
-                <Select value={ticketData.type} onValueChange={(val: any) => setTicketData({...ticketData, type: val})}>
-                  <SelectTrigger className="h-12 font-bold"><SelectValue /></SelectTrigger>
+      {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
+      {isAdmin && (
+        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
+          <DialogContent 
+            hideOverlay 
+            className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
+          >
+            <DialogHeader>
+              <DialogTitle>Generate Parking Ticket</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="vehicle-no" className="text-right">Vehicle No.</Label>
+                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" placeholder="KL-01-AB-1234" />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="vehicle-type" className="text-right">Type</Label>
+                <Select value={ticketData.type} onValueChange={(val: VehicleType) => setTicketData({ ...ticketData, type: val })}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="light">Light (Car)</SelectItem>
-                    <SelectItem value="medium">Medium (Van)</SelectItem>
-                    <SelectItem value="heavy">Heavy (Bus)</SelectItem>
+                    <SelectItem value="light">Light Vehicle (Car/Jeep)</SelectItem>
+                    <SelectItem value="medium">Medium Vehicle (Van/Mini Bus)</SelectItem>
+                    <SelectItem value="heavy">Heavy Vehicle (Bus/Truck)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label className="font-bold text-xs uppercase text-slate-500">Manual Zone (Opt)</Label>
-                <Select value={ticketData.zoneId} onValueChange={val => setTicketData({...ticketData, zoneId: val})}>
-                  <SelectTrigger className="h-12 font-bold"><SelectValue placeholder="Auto" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value=" ">Auto Assign</SelectItem>
-                    {zones.map(z => <SelectItem key={z.id} value={z.id}>{z.name}</SelectItem>)}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="zone" className="text-right">Zone</Label>
+                <Select value={ticketData.zoneId || "auto"} onValueChange={(val) => setTicketData({ ...ticketData, zoneId: val === "auto" ? "" : val })}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Auto-assign (Any Available)" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[200px]">
+                    <SelectItem value="auto">Auto-assign (Any Available)</SelectItem>
+                    {zones.map((zone) => (
+                      <SelectItem key={zone.id} value={zone.id}>{zone.name} ({zone.capacity - zone.occupied} free)</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="slot" className="text-right">Slot (Opt)</Label>
+                <Input id="slot" value={ticketData.slot} onChange={(e) => setTicketData({ ...ticketData, slot: e.target.value })} className="col-span-3" placeholder="e.g. A-12" />
+              </div>
             </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={handleGenerateTicket} className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl text-lg shadow-lg shadow-blue-100">PRINT TICKET</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
-}
+};
