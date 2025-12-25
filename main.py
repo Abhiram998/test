@@ -157,6 +157,60 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
+    
+    # ================================
+# REPORTS API
+# ================================
+from datetime import date
+from fastapi import Query
+
+@app.get("/api/reports")
+def get_reports(
+    zone: str | None = Query(default=None),
+    report_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns parking entry records for reports page
+    """
+
+    query = """
+        SELECT
+            pt.ticket_id,
+            v.vehicle_number,
+            v.vehicle_type,
+            z.zone_id,
+            pt.entry_time,
+            pt.exit_time
+        FROM parking_tickets pt
+        JOIN vehicles v ON pt.vehicle_id = v.id
+        JOIN parking_zones z ON pt.zone_id = z.id
+        WHERE 1=1
+    """
+
+    params = {}
+
+    if zone and zone != "All Zones":
+        query += " AND z.zone_id = :zone"
+        params["zone"] = zone
+
+    if report_date:
+        query += " AND DATE(pt.entry_time) = :report_date"
+        params["report_date"] = report_date
+
+    rows = db.execute(text(query), params).mappings().all()
+
+    return [
+        {
+            "ticketId": r["ticket_id"],
+            "vehicle": r["vehicle_number"],
+            "type": r["vehicle_type"],
+            "zone": r["zone_id"],
+            "entryTime": r["entry_time"],
+            "exitTime": r["exit_time"],
+        }
+        for r in rows
+    ]
 
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
