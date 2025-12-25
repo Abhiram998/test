@@ -1,14 +1,18 @@
+import json
+import os
+from datetime import datetime, date
+from pathlib import Path
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException, Depends, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
-from pathlib import Path
-from datetime import datetime, date
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
 from db import get_db
-import os
 
 # ================== ENV ==================
 load_dotenv()
@@ -31,38 +35,61 @@ app.add_middleware(
 
 def trigger_auto_snapshot(db: Session):
     """
-    Internal helper to record the current system state.
-    This creates the 'source of truth' for Quick Recovery.
+    Captures the full system state (count + actual vehicle records).
+    This ensures the 'data' column is never NULL.
     """
-    # 1. Ensure table exists
+    # 1. Ensure table structure is correct (including the 'data' column)
     db.execute(text("""
         CREATE TABLE IF NOT EXISTS snapshots (
             id SERIAL PRIMARY KEY,
             snapshot_time TIMESTAMP DEFAULT NOW(),
-            records_count INTEGER
+            records_count INTEGER,
+            data TEXT NOT NULL
         )
     """))
 
-    # 2. Count current vehicles inside
-    count = db.execute(text("""
-        SELECT COUNT(*) FROM parking_tickets WHERE exit_time IS NULL
-    """)).scalar()
+    # 2. Fetch all vehicles currently 'INSIDE' to create a portable backup
+    rows = db.execute(text("""
+        SELECT 
+            v.vehicle_number AS plate,
+            z.zone_id AS zone,
+            pt.entry_time AS "timeIn",
+            vt.type_name AS type
+        FROM parking_tickets pt
+        JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
+        JOIN parking_zones z ON pt.zone_id = z.zone_id
+        WHERE pt.exit_time IS NULL
+    """)).mappings().all()
 
-    # 3. Insert metadata
+    # Convert rows to serializable list and format timestamps
+    records = []
+    for r in rows:
+        item = dict(r)
+        if item["timeIn"]:
+            item["timeIn"] = item["timeIn"].isoformat()
+        records.append(item)
+
+    # 3. Insert the full JSON payload
     db.execute(text("""
-        INSERT INTO snapshots (records_count) VALUES (:count)
-    """), {"count": count})
+        INSERT INTO snapshots (records_count, data) 
+        VALUES (:count, :data)
+    """), {
+        "count": len(records), 
+        "data": json.dumps(records)
+    })
 
 # ================== STARTUP ==================
 @app.on_event("startup")
 def startup_db_check():
-    """Ensure essential tables exist on boot."""
+    """Ensure essential tables exist and schema is current on boot."""
     with next(get_db()) as db:
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id SERIAL PRIMARY KEY,
                 snapshot_time TIMESTAMP DEFAULT NOW(),
-                records_count INTEGER
+                records_count INTEGER,
+                data TEXT
             )
         """))
         db.commit()
@@ -178,10 +205,11 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
             WHERE zone_id=:z AND vehicle_type_id=:t
         """), {"z": z["zone_id"], "t": vt})
 
-        # --- AUTO SNAPSHOT TRIGGER ---
-        trigger_auto_snapshot(db)
+        # --- SYNC & BACKUP ---
+        db.flush() # Send changes to DB but don't commit yet
+        trigger_auto_snapshot(db) # Now the snapshot sees the new vehicle
+        db.commit() # Complete transaction
 
-        db.commit()
         return {"success": True, "ticket": ticket_code}
 
     except Exception as e:
@@ -224,9 +252,9 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
             WHERE zone_id = :z AND vehicle_type_id = :t
         """), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
 
-        # --- AUTO SNAPSHOT TRIGGER ---
+        # --- SYNC & BACKUP ---
+        db.flush()
         trigger_auto_snapshot(db)
-
         db.commit()
         return {"success": True, "message": "Vehicle exited successfully"}
 
@@ -237,8 +265,8 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
 # ================== REPORTS API ==================
 @app.get("/api/reports")
 def get_reports(
-    zone: str | None = Query(default=None),
-    report_date: date | None = Query(default=None),
+    zone: Optional[str] = Query(default=None),
+    report_date: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     query = """
@@ -246,9 +274,9 @@ def get_reports(
             pt.ticket_code       AS ticketid,
             v.vehicle_number     AS vehicle,
             vt.type_name         AS type,
-            z.zone_id            AS zone,
-            pt.entry_time        AS entrytime,
-            pt.exit_time         AS exittime
+            z.zone_id             AS zone,
+            pt.entry_time         AS entrytime,
+            pt.exit_time          AS exittime
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
@@ -290,12 +318,22 @@ def get_reports(
 def get_snapshots(db: Session = Depends(get_db)):
     try:
         rows = db.execute(text("""
-            SELECT snapshot_time, records_count AS records 
+            SELECT id, snapshot_time, records_count AS records, data
             FROM snapshots 
             ORDER BY snapshot_time DESC
+            LIMIT 20
         """)).mappings().all()
-        return rows
-    except Exception:
+        
+        result = []
+        for r in rows:
+            item = dict(r)
+            # Parse the stringified JSON back into a Python list for React
+            if item["data"]:
+                item["data"] = json.loads(item["data"])
+            result.append(item)
+        return result
+    except Exception as e:
+        print(f"Snapshot fetch error: {e}")
         return []
 
 @app.post("/api/snapshot")
