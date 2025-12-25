@@ -28,18 +28,16 @@ export default function Backup() {
   const loadSnapshots = async () => {
     setLoading(true);
     try {
-      // Frontend tries to fetch the list to show "X backups available"
       const data = await apiGet<SnapshotMeta[]>("/api/snapshots");
       if (data && Array.isArray(data)) {
         setSnapshots(data);
       }
     } catch (err) {
-      // This catch triggers the red toast you see in your screenshot
       console.error("Backup Sync Error:", err);
       toast({
         variant: "destructive",
         title: "Sync Error",
-        description: "Could not sync snapshot history from server.",
+        description: "Could not fetch snapshot history from server.",
       });
     } finally {
       setLoading(false);
@@ -53,16 +51,36 @@ export default function Backup() {
   /* ================= GET RECORDS (FOR RESTORE) ================= */
 
   const getRecords = async (): Promise<VehicleRecord[]> => {
-    const today = new Date().toISOString().slice(0, 10);
-    const rows = await apiGet<any[]>(`/api/reports?date=${today}`);
+    try {
+      // 1. Get current date for the report
+      const today = new Date().toISOString().slice(0, 10);
+      
+      // 2. Fetch all vehicles for today from the API
+      // This is the source for "Quick Recovery"
+      const rows = await apiGet<any[]>(`/api/reports?report_date=${today}`);
 
-    return rows.map((r) => ({
-      plate: `SNAP-${r.zone_id}`,
-      zone: r.zone_name,
-      timeIn: r.snapshot_time,
-      timeOut: null,
-      type: r.heavy > 0 ? "heavy" : r.medium > 0 ? "medium" : "light",
-    }));
+      if (!rows || !Array.isArray(rows)) return [];
+
+      // 3. Map backend fields (vehicle, zone, entryTime) to frontend VehicleRecord
+      // Only include vehicles that are currently "INSIDE" for recovery
+      return rows
+        .filter((r) => r.status === "INSIDE")
+        .map((r) => ({
+          plate: r.vehicle,         // Maps to 'v.vehicle_number' in main.py
+          zone: r.zone,            // Maps to 'z.zone_id' in main.py
+          timeIn: r.entryTime,     // ISO string from backend
+          timeOut: null,           // It's a recovery of active vehicles
+          type: r.type.toLowerCase() as "light" | "medium" | "heavy",
+        }));
+    } catch (error) {
+      console.error("Quick Recovery Fetch Failed:", error);
+      toast({
+        variant: "destructive",
+        title: "Recovery Error",
+        description: "Failed to fetch recovery data from server.",
+      });
+      return [];
+    }
   };
 
   /* ================= UI ================= */
@@ -88,17 +106,17 @@ export default function Backup() {
         </div>
       </div>
 
-      {/* BACKUP PANEL - Dark UI */}
+      {/* BACKUP PANEL - Dark UI as per screenshot */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        {/* STATUS TEXT - Top button removed as per edited-image.png */}
+        {/* STATUS TEXT */}
         <div className="text-sm text-zinc-400 font-medium">
           {loading ? (
-            "Syncing..."
+            "Syncing snapshot history..."
           ) : snapshots.length === 0 ? (
             "No backups available"
           ) : (
-            `${snapshots.length} backups available on server`
+            `${snapshots.length} automatic snapshots available on server`
           )}
         </div>
 
@@ -113,7 +131,7 @@ export default function Backup() {
       </div>
 
       <p className="text-[11px] text-zinc-500 px-2 italic">
-        * Snapshots are stored securely on the central server and can be used to recover the system in case of local data loss.
+        * Snapshots are created automatically on every entry/exit and stored securely on the central server.
       </p>
     </div>
   );

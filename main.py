@@ -27,6 +27,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ================== HELPERS ==================
+
+def trigger_auto_snapshot(db: Session):
+    """
+    Internal helper to record the current system state.
+    This creates the 'source of truth' for Quick Recovery.
+    """
+    # 1. Ensure table exists
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id SERIAL PRIMARY KEY,
+            snapshot_time TIMESTAMP DEFAULT NOW(),
+            records_count INTEGER
+        )
+    """))
+
+    # 2. Count current vehicles inside
+    count = db.execute(text("""
+        SELECT COUNT(*) FROM parking_tickets WHERE exit_time IS NULL
+    """)).scalar()
+
+    # 3. Insert metadata
+    db.execute(text("""
+        INSERT INTO snapshots (records_count) VALUES (:count)
+    """), {"count": count})
+
+# ================== STARTUP ==================
+@app.on_event("startup")
+def startup_db_check():
+    """Ensure essential tables exist on boot."""
+    with next(get_db()) as db:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id SERIAL PRIMARY KEY,
+                snapshot_time TIMESTAMP DEFAULT NOW(),
+                records_count INTEGER
+            )
+        """))
+        db.commit()
+
 # ================== ROOT & HEALTH ==================
 @app.get("/api")
 def root():
@@ -138,6 +178,9 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
             WHERE zone_id=:z AND vehicle_type_id=:t
         """), {"z": z["zone_id"], "t": vt})
 
+        # --- AUTO SNAPSHOT TRIGGER ---
+        trigger_auto_snapshot(db)
+
         db.commit()
         return {"success": True, "ticket": ticket_code}
 
@@ -180,6 +223,9 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
             SET current_count = current_count - 1
             WHERE zone_id = :z AND vehicle_type_id = :t
         """), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
+
+        # --- AUTO SNAPSHOT TRIGGER ---
+        trigger_auto_snapshot(db)
 
         db.commit()
         return {"success": True, "message": "Vehicle exited successfully"}
@@ -242,9 +288,7 @@ def get_reports(
 
 @app.get("/api/snapshots")
 def get_snapshots(db: Session = Depends(get_db)):
-    """ Fetches the history of snapshots for the Backup UI counter """
     try:
-        # We wrap in a try block in case the snapshots table doesn't exist yet
         rows = db.execute(text("""
             SELECT snapshot_time, records_count AS records 
             FROM snapshots 
@@ -252,32 +296,12 @@ def get_snapshots(db: Session = Depends(get_db)):
         """)).mappings().all()
         return rows
     except Exception:
-        # Return empty list so frontend doesn't show red error if table is missing
         return []
 
 @app.post("/api/snapshot")
 def create_snapshot(db: Session = Depends(get_db)):
-    """ Saves a new snapshot of current 'INSIDE' vehicles """
     try:
-        # 1. Ensure table exists
-        db.execute(text("""
-            CREATE TABLE IF NOT EXISTS snapshots (
-                id SERIAL PRIMARY KEY,
-                snapshot_time TIMESTAMP DEFAULT NOW(),
-                records_count INTEGER
-            )
-        """))
-
-        # 2. Count current vehicles inside
-        count = db.execute(text("""
-            SELECT COUNT(*) FROM parking_tickets WHERE exit_time IS NULL
-        """)).scalar()
-
-        # 3. Insert metadata
-        db.execute(text("""
-            INSERT INTO snapshots (records_count) VALUES (:count)
-        """), {"count": count})
-
+        trigger_auto_snapshot(db)
         db.commit()
         return {"success": True}
     except Exception as e:
