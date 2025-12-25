@@ -84,7 +84,7 @@ def trigger_auto_snapshot(db: Session):
 def startup_db_check():
     """Ensure essential tables exist and schema is current on boot."""
     with next(get_db()) as db:
-        # FIXED: Added NOT NULL to ensure the search and snapshot logic is stable
+        # Fixed: Added NOT NULL to ensure the search and snapshot logic is stable
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id SERIAL PRIMARY KEY,
@@ -158,18 +158,17 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
     """), {"zone_id": zone_id}).mappings().all()
     return rows
 
-# ================== VEHICLE SEARCH (STRICT CLEAN FIX) ==================
+# ================== VEHICLE SEARCH (FIXED & IMPROVED) ==================
 @app.get("/api/search")
 def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
     """
-    This version ignores ALL special characters (hyphens, spaces) 
-    to ensure KL-39-F-5003 matches KL39F5003.
+    Search that ignores all hyphens, spaces, and case differences.
+    Matches 'KL-39-F-5003' even if stored as 'KL 39 F 5003' or 'KL39F5003'.
     """
-    # 1. Clean user input: "KL-39-F-5003" -> "KL39F5003"
-    clean_q = q.strip().replace("-", "").replace(" ", "").upper()
+    # 1. Clean the user's input (Remove hyphens and spaces)
+    search_term = q.strip().replace("-", "").replace(" ", "").upper()
     
-    # 2. SQL that cleans the DB column on the fly
-    # We use nested REPLACE to strip both '-' and ' '
+    # 2. SQL: Strip hyphens/spaces from the DB column and compare to the cleaned input
     row = db.execute(text("""
         SELECT 
             v.vehicle_number AS vehicle, 
@@ -182,10 +181,10 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
         WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') = :q 
           AND pt.exit_time IS NULL
         LIMIT 1
-    """), {"q": clean_q}).mappings().first()
+    """), {"q": search_term}).mappings().first()
     
+    # 3. Backup: If exact clean match fails, try a partial match
     if not row:
-        # If exact match fails, try a 'LIKE' match as a backup
         row = db.execute(text("""
             SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
             FROM parking_tickets pt
@@ -194,16 +193,16 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
             WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q
               AND pt.exit_time IS NULL
             LIMIT 1
-        """), {"q": f"%{clean_q}%"}).mappings().first()
+        """), {"q": f"%{search_term}%"}).mappings().first()
 
     if not row:
         raise HTTPException(404, "Vehicle not currently parked")
         
     return {
         "vehicle": row["vehicle"],
-        "ticket_code": row["ticket_code"],
-        "entry_time": row["entry_time"].isoformat() if row["entry_time"] else None,
-        "zone_name": row["zone_name"]
+        "ticketId": row["ticket_code"], # Matches common frontend naming
+        "entryTime": row["entry_time"].isoformat() if row["entry_time"] else None,
+        "zone": row["zone_name"]
     }
 
 # ================== ENTER VEHICLE ==================
