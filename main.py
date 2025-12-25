@@ -158,17 +158,18 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
     """), {"zone_id": zone_id}).mappings().all()
     return rows
 
-# ================== VEHICLE SEARCH (FUZZY MATCH FIX) ==================
+# ================== VEHICLE SEARCH (STRICT CLEAN FIX) ==================
 @app.get("/api/search")
 def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
     """
-    Improved search: 
-    1. Removes all hyphens and spaces from the user input.
-    2. Removes all hyphens and spaces from the database records during comparison.
+    This version ignores ALL special characters (hyphens, spaces) 
+    to ensure KL-39-F-5003 matches KL39F5003.
     """
-    # Clean the user's input: "KL-39-F-5003" becomes "KL39F5003"
-    search_term = q.strip().replace("-", "").replace(" ", "").upper()
+    # 1. Clean user input: "KL-39-F-5003" -> "KL39F5003"
+    clean_q = q.strip().replace("-", "").replace(" ", "").upper()
     
+    # 2. SQL that cleans the DB column on the fly
+    # We use nested REPLACE to strip both '-' and ' '
     row = db.execute(text("""
         SELECT 
             v.vehicle_number AS vehicle, 
@@ -178,11 +179,23 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN parking_zones z ON pt.zone_id = z.zone_id
-        WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q 
+        WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') = :q 
           AND pt.exit_time IS NULL
         LIMIT 1
-    """), {"q": f"%{search_term}%"}).mappings().first()
+    """), {"q": clean_q}).mappings().first()
     
+    if not row:
+        # If exact match fails, try a 'LIKE' match as a backup
+        row = db.execute(text("""
+            SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
+            FROM parking_tickets pt
+            JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+            JOIN parking_zones z ON pt.zone_id = z.zone_id
+            WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q
+              AND pt.exit_time IS NULL
+            LIMIT 1
+        """), {"q": f"%{clean_q}%"}).mappings().first()
+
     if not row:
         raise HTTPException(404, "Vehicle not currently parked")
         
