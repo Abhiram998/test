@@ -33,9 +33,9 @@ export type ParkingZone = {
 
 type ParkingContextType = {
   zones: ParkingZone[];
-  // FIX 1: Added refreshData to type
+  // FIX 1: Added refreshData to type for Report/Exit support
   refreshData: () => Promise<void>; 
-  // FIX 2: Corrected return type to Promise to match async implementation
+  // FIX 2: Corrected to Promise return for async entry
   enterVehicle: (vehicleNumber: string, type?: VehicleType, zoneId?: string, slot?: string) => Promise<{ success: boolean; ticket?: any; message?: string }>;
   totalCapacity: number;
   totalOccupied: number;
@@ -82,14 +82,17 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     console.log("🔄 ZONES UPDATED FROM BACKEND", zones);
   }, [zones]);
 
-  // FIX 3: Moved loadZones into a named function 'refreshData' so Report.tsx can use it
+  // FIX 3: Centralized refresh logic
   const refreshData = async () => {
     try {
       const data = await apiGet<ParkingZone[]>("/api/zones");
+
       const normalized = data.map(z => ({
         ...z,
-        vehicles: [], 
+        vehicles: [], // We use counts (z.stats) instead of the vehicle list for dashboard
+        stats: z.stats || { heavy: 0, medium: 0, light: 0 } // Ensure stats are always present
       }));
+
       setZones(normalized);
     } catch (err) {
       console.error("❌ Failed to load zones from backend", err);
@@ -105,12 +108,12 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     { username: "police@gmail.com", password: "575", name: "Sabarimala Traffic Control", policeId: "POL-KERALA-575" }
   ]);
 
-  // Persistence logic (Kept exactly as per your original)
+  // Persistence logic (Kept 100% original)
   useEffect(() => {
     const interval = setInterval(() => {
        const payload = makeSnapshotFromState(zonesRef.current);
        saveLatestSnapshot(payload).catch(e => console.error("Auto-save failed", e));
-    }, 3 * 60 * 1000);
+    }, 3 * 60 * 1000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -199,7 +202,6 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
         return { success: false, message: "Entry failed" };
       }
 
-      // Updated to use the named function
       await refreshData();
 
       return {
@@ -233,6 +235,7 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
       if (rec.timeOut) return;
       const zoneName = rec.zone;
       let zone = newZones.find(z => z.name === zoneName) || newZones.find(z => z.id === rec.zone); 
+      
       if (!zone && rec.zone) {
           zone = newZones.find(z => z.name.includes(rec.zone) || rec.zone.includes(z.id));
       }
@@ -261,7 +264,7 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
 
       zone.vehicles.push(vehicle);
       zone.occupied++;
-      zone.stats[vehicleType]++;
+      zone.stats[vehicleType]++; 
     });
 
     setZones(newZones);

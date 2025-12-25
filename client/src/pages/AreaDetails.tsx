@@ -1,6 +1,6 @@
 import { useParams, Link } from "wouter";
 import { useParking } from "@/lib/parking-context";
-import { ArrowLeft, Car, User, Truck, Bus } from "lucide-react";
+import { ArrowLeft, Car, Truck, Bus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,19 +8,26 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 
-
 export default function AreaDetails() {
   const { id } = useParams();
   const { zones, isAdmin } = useParking();
   const zone = zones.find(z => z.id === id);
   const [vehicles, setVehicles] = useState<any[]>([]);
 
-  if (!zone) return <div>Zone not found</div>;
+  // Find zone data from context
+  if (!zone) return <div className="p-8 text-center">Zone not found</div>;
+
+  // Use the stats directly from the zone object (PostgreSQL Source of Truth)
+  // This prevents the "Occupied 9 but Classification 0" error
+  const occupiedCount = zone.occupied; 
+  const stats = zone.stats || { light: 0, medium: 0, heavy: 0 };
+  
+  const percentage = Math.round((occupiedCount / zone.capacity) * 100);
+  const isFull = percentage >= 100;
 
   useEffect(() => {
     if (!id) return;
 
-    // Function to fetch data
     const fetchVehicles = () => {
       apiGet<any[]>(`/api/zones/${id}/vehicles`)
         .then(setVehicles)
@@ -30,42 +37,29 @@ export default function AreaDetails() {
         });
     };
 
-    // Initial fetch
     fetchVehicles();
-
-    // Set up polling interval (every 5 seconds)
     const interval = setInterval(fetchVehicles, 5000);
-
-    // Clean up interval on unmount
     return () => clearInterval(interval);
-  }, [id, zone?.occupied]);
+  }, [id, zone.occupied]); // Refetch list if context occupancy changes
 
-
-  const occupiedCount = vehicles.length;
-  const percentage = Math.round((occupiedCount / zone.capacity) * 100);
-  const isFull = percentage >= 100;
-
+  // Chart data now uses database stats instead of array filtering
   const vehicleTypeData = [
     {
       name: 'Light (Cars/Jeeps)',
-      value: vehicles.filter(v => v.type === 'light').length,
+      value: stats.light,
       color: 'hsl(var(--primary))',
-      icon: Car
     },
     {
       name: 'Medium (Vans/Minibus)',
-      value: vehicles.filter(v => v.type === 'medium').length,
+      value: stats.medium,
       color: '#f59e0b',
-      icon: Truck
     },
     {
       name: 'Heavy (Buses/Trucks)',
-      value: vehicles.filter(v => v.type === 'heavy').length,
+      value: stats.heavy,
       color: '#ef4444',
-      icon: Bus
     }
   ];
-
 
   const getVehicleIcon = (type: string) => {
     switch (type) {
@@ -89,7 +83,7 @@ export default function AreaDetails() {
         </div>
       </div>
 
-      {/* Stats Overview */}
+      {/* Stats Overview - Using Zone Context (DB Numbers) */}
       <div className="grid grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6 text-center">
@@ -97,22 +91,22 @@ export default function AreaDetails() {
             <div className="text-xs text-muted-foreground uppercase">Total</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-6 text-center border-primary/20 bg-primary/5">
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="pt-6 text-center">
             <div className="text-2xl font-bold text-primary">{occupiedCount}</div>
             <div className="text-xs text-muted-foreground uppercase">Occupied</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-6 text-center border-green-500/20 bg-green-500/5">
-            <div className="text-2xl font-bold text-green-600">{zone.capacity - occupiedCount}</div>
+        <Card className="border-green-500/20 bg-green-500/5">
+          <CardContent className="pt-6 text-center">
+            <div className="text-2xl font-bold text-green-600">{Math.max(0, zone.capacity - occupiedCount)}</div>
             <div className="text-xs text-muted-foreground uppercase">Vacant</div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Vehicle Type Breakdown */}
       <div className="grid md:grid-cols-2 gap-6">
+        {/* Classification Chart - Uses DB Stats */}
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Vehicle Classification</CardTitle>
@@ -147,7 +141,7 @@ export default function AreaDetails() {
                 <div key={item.name} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="text-sm font-medium">{item.name}</span>
+                    <span className="text-sm font-medium">{item.name.split(' ')[0]}</span>
                   </div>
                   <span className="font-bold font-mono">{item.value}</span>
                 </div>
@@ -156,6 +150,7 @@ export default function AreaDetails() {
           </CardContent>
         </Card>
 
+        {/* Live Slot Map */}
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Live Slot Map</CardTitle>
@@ -170,29 +165,32 @@ export default function AreaDetails() {
             </div>
 
             <div className="grid grid-cols-5 sm:grid-cols-8 gap-2">
-              {Array.from({ length: zone.capacity }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`aspect-square rounded-sm flex items-center justify-center text-[10px] font-mono transition-all border ${
-                    i < occupiedCount
-                      ? "bg-slate-100 border-slate-200 dark:bg-slate-800 dark:border-slate-700 text-muted-foreground"
-                      : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
-                  }`}
-                  title={i < occupiedCount ? "Occupied" : `Slot ${i + 1} Free`}
-                >
-                  {i < occupiedCount ? (
-                    vehicles[i] ? getVehicleIcon(vehicles[i].type) : <Car className="w-3 h-3" />
-                  ) : (
-                    i + 1
-                  )}
-                </div>
-              ))}
+              {Array.from({ length: zone.capacity }).map((_, i) => {
+                const isSlotOccupied = i < occupiedCount;
+                const vehicleInSlot = vehicles[i];
+                return (
+                  <div
+                    key={i}
+                    className={`aspect-square rounded-sm flex items-center justify-center text-[10px] font-mono transition-all border ${
+                      isSlotOccupied
+                        ? "bg-slate-100 border-slate-200 text-muted-foreground"
+                        : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+                    }`}
+                  >
+                    {isSlotOccupied ? (
+                      vehicleInSlot ? getVehicleIcon(vehicleInSlot.type) : <Car className="w-3 h-3" />
+                    ) : (
+                      i + 1
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Vehicle List - Only visible to Admin */}
+      {/* Admin Vehicle List */}
       {isAdmin && (
         <Card>
           <CardHeader>
@@ -204,33 +202,27 @@ export default function AreaDetails() {
           <CardContent>
             {vehicles.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                No vehicles currently parked in this zone.
+                No vehicles found in the database for this zone.
               </div>
             ) : (
               <div className="divide-y">
                 {vehicles.map((v, i) => (
                   <div key={i} className="py-3 flex justify-between items-center">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${v.type === 'heavy' ? 'bg-red-500' : v.type === 'medium' ? 'bg-amber-500' : 'bg-primary'
-                        }`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${
+                        v.type === 'heavy' ? 'bg-red-500' : v.type === 'medium' ? 'bg-amber-500' : 'bg-primary'
+                      }`}>
                         {getVehicleIcon(v.type)}
                       </div>
                       <div>
                         <div className="font-mono font-medium">{v.number}</div>
                         <div className="flex gap-2 items-center">
-                          <span className="text-xs text-muted-foreground">Ticket: {v.ticketId}</span>
-                          <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${v.type === 'heavy' ? 'border-red-200 bg-red-50 text-red-700' :
-                              v.type === 'medium' ? 'border-amber-200 bg-amber-50 text-amber-700' :
-                                'border-blue-200 bg-blue-50 text-blue-700'
-                            }`}>
-                            {v.type}
-                          </span>
+                          <span className="text-xs text-muted-foreground">Ticket: {v.ticket_id || v.ticketId}</span>
                         </div>
                       </div>
                     </div>
                     <div className="text-sm text-muted-foreground font-mono">
-                      {/* Note: Ensure entryTime is a Date object if using .toLocaleTimeString() */}
-                      {v.entryTime instanceof Date ? v.entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : v.entryTime}
+                      {new Date(v.entry_time || v.entryTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
                 ))}
