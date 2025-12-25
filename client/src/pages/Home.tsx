@@ -3,10 +3,12 @@ import { ZoneCard } from "@/components/parking/ZoneCard";
 import { MapPin, Search, MoreHorizontal, Activity, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api";
-import { useParking } from "@/lib/parking-context";
+import { useEffect } from "react";
+import { useParking } from "@/lib/parking-context"; // 🔹 Added this import
 
 import {
   Dialog,
@@ -62,17 +64,27 @@ type VehicleSearchResult = {
   entry_time: string;
 };
 
+
 export default function Home() {
+  // 🔐 FIXED: Now using the real global state instead of hardcoded true
   const { isAdmin } = useParking();
-  const { toast } = useToast();
 
   // 🔹 Zones from backend API
   const [zones, setZones] = useState<Zone[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<VehicleSearchResult | null>(null);
+
+  // 🔹 Derived totals
+  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
+  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
+
+  const { toast } = useToast();
   
-  // State for interactive graph and Dialogs
+  // Calculate vacancy
+  const totalVacancy = totalCapacity - totalOccupied;
+  
+  // State for interactive graph
   const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
+
+  // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
   const [ticketData, setTicketData] = useState({
     vehicleNumber: "",
@@ -81,26 +93,33 @@ export default function Home() {
     type: "light" as VehicleType
   });
 
-  // 🔹 Derived totals
-  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
-  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
-  const totalVacancy = totalCapacity - totalOccupied;
-
-  // 🔹 Fetch function reused for initial load and after actions
-  const fetchZones = async () => {
-    try {
-      const data = await apiGet<Zone[]>("/api/zones");
-      setZones(data);
-    } catch (err) {
-      console.error("Failed to load zones", err);
-    }
-  };
-
   useEffect(() => {
+    let isMounted = true;
+
+    const fetchZones = () => {
+      apiGet<Zone[]>("/api/zones")
+        .then((data) => {
+          if (isMounted) setZones(data);
+        })
+        .catch((err) => {
+          console.error("Failed to load zones", err);
+          toast({
+            variant: "destructive",
+            title: "API Error",
+            description: "Unable to load parking zones from server",
+          });
+        });
+    };
+
     fetchZones();
     const interval = setInterval(fetchZones, 5000);
-    return () => clearInterval(interval);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
+
 
   const handleGenerateTicket = async () => {
     if (!ticketData.vehicleNumber) {
@@ -113,11 +132,11 @@ export default function Home() {
     }
 
     try {
-      await apiPost("/api/enter", {
-        vehicle: ticketData.vehicleNumber,
-        type: ticketData.type,
-        zone: ticketData.zoneId || undefined,
-        slot: ticketData.slot || undefined,
+       await apiPost("/api/enter", {
+       vehicle: ticketData.vehicleNumber,
+       type: ticketData.type,
+       zone: ticketData.zoneId || undefined,
+       slot: ticketData.slot || undefined,
       });
 
       toast({
@@ -127,8 +146,7 @@ export default function Home() {
 
       setIsTicketOpen(false);
       setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
-      // Immediate Refresh
-      fetchZones();
+      apiGet<Zone[]>("/api/zones").then(setZones);
 
     } catch (err: any) {
       toast({
@@ -139,35 +157,31 @@ export default function Home() {
     }
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-
-    try {
-      const result = await apiGet<VehicleSearchResult>(
-        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
-      );
-      setSearchResult(result);
-    } catch {
-      setSearchResult(null);
-      toast({
-        variant: "destructive",
-        title: "Not Found",
-        description: "Vehicle not currently parked",
-      });
-    }
-  };
 
   // Chart Data Preparation
   const barChartData = zones.map(zone => {
-    const calcPct = (current: number, limit: number) => 
-      limit > 0 ? (current / limit) * 100 : 0;
+    let heavyPct = 0;
+    let mediumPct = 0;
+    let lightPct = 0;
+
+    if (zone.limits) {
+       heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
+       mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
+       lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
+    } else {
+       heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
+       mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
+       lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
+    }
 
     return {
       name: zone.name.replace('Nilakkal Parking Zone ', 'P'),
-      Heavy: zone.limits ? calcPct(zone.stats.heavy, zone.limits.heavy) : calcPct(zone.stats.heavy, zone.capacity),
-      Medium: zone.limits ? calcPct(zone.stats.medium, zone.limits.medium) : calcPct(zone.stats.medium, zone.capacity),
-      Light: zone.limits ? calcPct(zone.stats.light, zone.limits.light) : calcPct(zone.stats.light, zone.capacity),
+      Heavy: heavyPct,
+      Medium: mediumPct,
+      Light: lightPct,
+      occupied: zone.occupied,
+      capacity: zone.capacity,
+      limits: zone.limits, 
       originalZone: zone 
     };
   });
@@ -188,14 +202,39 @@ export default function Home() {
     { name: 'Light', value: activeStats.light, color: '#3b82f6' },
   ];
 
-  const TopCard = ({ title, value, dark = false, isVacancy = false }: any) => (
-    <div className={`rounded-xl p-3 shadow-sm border transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
-      <div className="flex justify-between items-center">
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<any>(null);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    try {
+      const result = await apiGet<VehicleSearchResult>(
+        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+      );
+      setSearchResult(result);
+    } catch {
+      setSearchResult(null);
+      toast({
+        variant: "destructive",
+        title: "Not Found",
+        description: "Vehicle not currently parked",
+      });
+    }
+  };
+
+
+  const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
+    <div className={`rounded-xl p-3 shadow-sm border relative overflow-hidden group hover:shadow-md transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
+      <div className="flex justify-between items-center mb-0">
         <span className={`text-[10px] font-bold uppercase tracking-wider ${dark ? 'text-slate-300' : 'text-slate-500'}`}>{title}</span>
         <div className={`text-xl font-bold ${isVacancy ? 'text-green-500' : ''}`}>
           {value}
         </div>
       </div>
+      {subValue && <div className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-400'}`}>{subValue}</div>}
     </div>
   );
 
@@ -207,7 +246,7 @@ export default function Home() {
           <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
         </div>
         <div className="flex items-center gap-4">
-           <img src={logo} alt="Kerala Police Logo" className="h-16 w-auto object-contain" />
+           <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
            <Button variant="ghost" size="icon" className="md:hidden">
              <MoreHorizontal />
            </Button>
@@ -272,22 +311,30 @@ export default function Home() {
           
           {/* Bar Chart Section */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-4">
-                <h3 className="font-bold text-slate-700">Live Parking Status (Occupancy %)</h3>
+                <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
+                
+                {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
                 {isAdmin && (
                   <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
                     <Ticket className="w-4 h-4" /> Generate Ticket
                   </Button>
                 )}
               </div>
-              <div className="flex items-center gap-4">
-                 {['Heavy', 'Medium', 'Light'].map((type, i) => (
-                   <div key={type} className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-sm ${i===0?'bg-[#1e293b]':i===1?'bg-[#f59e0b]':'bg-[#3b82f6]'}`}></div>
-                      <span className="text-xs text-slate-500">{type}</span>
-                   </div>
-                 ))}
+              <div className="hidden md:flex items-center gap-6">
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Heavy</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#f59e0b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Medium</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#3b82f6] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Light</span>
+                 </div>
               </div>
             </div>
             
@@ -302,7 +349,9 @@ export default function Home() {
                       setHoveredZone(state.activePayload[0].payload.originalZone);
                     }
                   }}
-                  onMouseLeave={() => setHoveredZone(null)}
+                  onMouseLeave={() => {
+                    setHoveredZone(null);
+                  }}
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis 
@@ -311,6 +360,7 @@ export default function Home() {
                     tickLine={false} 
                     tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
                     dy={10} 
+                    interval={0} 
                   />
                   <YAxis 
                     axisLine={false} 
@@ -318,32 +368,45 @@ export default function Home() {
                     tick={{fill: '#64748b', fontSize: 12}} 
                     unit="%"
                     domain={[0, 100]} 
+                    allowDataOverflow={true}
                   />
                   <Tooltip 
                     cursor={{ fill: '#f8fafc' }}
                     content={({ active, payload, label }) => {
                       if (active && payload && payload.length) {
                         const data = payload[0].payload;
-                        const oz = data.originalZone;
+                        const originalZone = data.originalZone;
                         return (
                           <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-lg text-sm">
                             <p className="font-bold text-slate-800 mb-2">{label}</p>
                             <div className="space-y-1">
-                              {[
-                                { lab: 'Heavy', val: oz.stats.heavy, lim: oz.limits?.heavy, pct: data.Heavy, col: '#1e293b' },
-                                { lab: 'Medium', val: oz.stats.medium, lim: oz.limits?.medium, pct: data.Medium, col: '#f59e0b' },
-                                { lab: 'Light', val: oz.stats.light, lim: oz.limits?.light, pct: data.Light, col: '#3b82f6' }
-                              ].map(row => (
-                                <div key={row.lab} className="flex items-center justify-between gap-4 text-xs">
-                                  <span className="flex items-center gap-1.5 text-slate-500">
-                                    <div className="w-2 h-2 rounded-full" style={{backgroundColor: row.col}}></div>
-                                    {row.lab}
-                                  </span>
-                                  <span className="font-mono font-medium">
-                                    {row.val} / {row.lim || '-'} ({row.pct.toFixed(1)}%)
-                                  </span>
-                                </div>
-                              ))}
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#1e293b]"></div>
+                                  Heavy
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
+                                  Medium
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>
+                                  Light
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)
+                                </span>
+                              </div>
                             </div>
                           </div>
                         );
@@ -351,14 +414,14 @@ export default function Home() {
                       return null;
                     }}
                   />
-                  <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(v: number) => v > 15 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]} name="Heavy">
+                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
-                  <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(v: number) => v > 15 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Medium">
+                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
-                  <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(v: number) => v > 15 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Light">
+                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -370,9 +433,10 @@ export default function Home() {
              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
                    <Activity className="w-5 h-5 text-orange-500" />
-                   <h3 className="font-bold text-slate-700">Live Zone Overview</h3>
+                   <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
                 </div>
 
+                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
@@ -397,26 +461,30 @@ export default function Home() {
                 )}
              </div>
              
-             <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
+             <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
                 {zones.map((zone) => (
                   <ZoneCard key={zone.id} zone={zone} />
                 ))}
              </div>
           </div>
+
         </div>
       </div>
 
-      {/* Ticket Dialog (Police Only) */}
+      {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
       {isAdmin && (
-        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen}>
-          <DialogContent className="sm:max-w-[425px]">
+        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
+          <DialogContent 
+            hideOverlay 
+            className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
+          >
             <DialogHeader>
               <DialogTitle>Generate Parking Ticket</DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="vehicle-no" className="text-right">Vehicle No.</Label>
-                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value.toUpperCase() })} className="col-span-3" placeholder="KL-01-AB-1234" />
+                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" placeholder="KL-01-AB-1234" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="vehicle-type" className="text-right">Type</Label>
@@ -435,10 +503,10 @@ export default function Home() {
                 <Label htmlFor="zone" className="text-right">Zone</Label>
                 <Select value={ticketData.zoneId || "auto"} onValueChange={(val) => setTicketData({ ...ticketData, zoneId: val === "auto" ? "" : val })}>
                   <SelectTrigger className="col-span-3">
-                    <SelectValue placeholder="Auto-assign" />
+                    <SelectValue placeholder="Auto-assign (Any Available)" />
                   </SelectTrigger>
                   <SelectContent className="max-h-[200px]">
-                    <SelectItem value="auto">Auto-assign (Recommended)</SelectItem>
+                    <SelectItem value="auto">Auto-assign (Any Available)</SelectItem>
                     {zones.map((zone) => (
                       <SelectItem key={zone.id} value={zone.id}>{zone.name} ({zone.capacity - zone.occupied} free)</SelectItem>
                     ))}
@@ -451,11 +519,11 @@ export default function Home() {
               </div>
             </div>
             <DialogFooter>
-              <Button type="submit" onClick={handleGenerateTicket} className="w-full">Confirm Entry</Button>
+              <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
     </div>
   );
-}
+};
