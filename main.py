@@ -158,8 +158,8 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(500, str(e))
     
-    # ================================
-# REPORTS API
+# ================================
+# REPORTS API (FIXED)
 # ================================
 from datetime import date
 from fastapi import Query
@@ -171,46 +171,44 @@ def get_reports(
     db: Session = Depends(get_db),
 ):
     """
-    Returns parking entry records for reports page
+    Returns parking reports:
+    - Current vehicles
+    - Past vehicles
+    - Filterable by zone & date
     """
 
     query = """
         SELECT
-            pt.ticket_id,
-            v.vehicle_number,
-            v.vehicle_type,
-            z.zone_id,
-            pt.entry_time,
-            pt.exit_time
+            pt.ticket_code        AS ticketId,
+            v.vehicle_number     AS vehicle,
+            vt.type_name         AS type,
+            z.zone_id            AS zone,
+            pt.entry_time        AS entryTime,
+            pt.exit_time         AS exitTime
         FROM parking_tickets pt
-        JOIN vehicles v ON pt.vehicle_id = v.id
-        JOIN parking_zones z ON pt.zone_id = z.id
+        JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
+        JOIN parking_zones z ON pt.zone_id = z.zone_id
         WHERE 1=1
     """
 
     params = {}
 
+    # Zone filter
     if zone and zone != "All Zones":
         query += " AND z.zone_id = :zone"
         params["zone"] = zone
 
+    # Date filter (based on entry time)
     if report_date:
         query += " AND DATE(pt.entry_time) = :report_date"
         params["report_date"] = report_date
 
+    query += " ORDER BY pt.entry_time DESC"
+
     rows = db.execute(text(query), params).mappings().all()
 
-    return [
-        {
-            "ticketId": r["ticket_id"],
-            "vehicle": r["vehicle_number"],
-            "type": r["vehicle_type"],
-            "zone": r["zone_id"],
-            "entryTime": r["entry_time"],
-            "exitTime": r["exit_time"],
-        }
-        for r in rows
-    ]
+    return rows
 
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
