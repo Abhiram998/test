@@ -159,7 +159,7 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(500, str(e))
     
 # ================================
-# REPORTS API (FINAL)
+# REPORTS API (CORRECTED)
 # ================================
 from datetime import date
 from fastapi import Query
@@ -172,19 +172,18 @@ def get_reports(
 ):
     """
     Returns parking reports:
-    - Current vehicles (exit_time IS NULL)
-    - Past vehicles (exit_time IS NOT NULL)
-    - Filterable by zone & date
+    - Logic FIX: Returns vehicles present on 'report_date' regardless of entry day
+    - Filterable by zone_id & date
     """
 
     query = """
         SELECT
-            pt.ticket_code        AS ticketId,
+            pt.ticket_code       AS ticketid,
             v.vehicle_number     AS vehicle,
             vt.type_name         AS type,
             z.zone_id            AS zone,
-            pt.entry_time        AS entryTime,
-            pt.exit_time         AS exitTime
+            pt.entry_time        AS entrytime,
+            pt.exit_time         AS exittime
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
@@ -194,19 +193,27 @@ def get_reports(
 
     params = {}
 
-    if zone and zone != "All Zones":
+    # 1. ZONE FILTER: Use zone_id (Z1, Z2)
+    if zone and zone not in ["All Zones", "all"]:
         query += " AND z.zone_id = :zone"
         params["zone"] = zone
 
+    # 2. DATE LOGIC FIX: Catch vehicles active during that 24-hour window
     if report_date:
-        query += " AND DATE(pt.entry_time) = :report_date"
+        # Returns vehicles that entered ON or BEFORE report_date 
+        # AND (haven't left yet OR left AFTER report_date started)
+        query += """ 
+            AND DATE(pt.entry_time) <= :report_date 
+            AND (pt.exit_time IS NULL OR DATE(pt.exit_time) >= :report_date)
+        """
         params["report_date"] = report_date
 
     query += " ORDER BY pt.entry_time DESC"
 
+    # Fetch rows
     rows = db.execute(text(query), params).mappings().all()
 
-    # 🔥 Convert datetime → ISO string (IMPORTANT)
+    # 3. DATA MAPPING FIX: Ensuring lowercase keys to match SQLAlchemy mappings
     return [
         {
             "ticketId": r["ticketid"],
