@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api";
 import { useEffect } from "react";
+import { useParking } from "@/lib/parking-context"; // 🔹 Added this import
 
 import {
   Dialog,
@@ -65,15 +66,15 @@ type VehicleSearchResult = {
 
 
 export default function Home() {
-  const isAdmin = true;
+  // 🔐 FIXED: Now using the real global state instead of hardcoded true
+  const { isAdmin } = useParking();
 
+  // 🔹 Zones from backend API
+  const [zones, setZones] = useState<Zone[]>([]);
 
-// 🔹 Zones from backend API
-const [zones, setZones] = useState<Zone[]>([]);
-
-// 🔹 Derived totals (instead of context)
-const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
-const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
+  // 🔹 Derived totals
+  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
+  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
 
   const { toast } = useToast();
   
@@ -93,82 +94,72 @@ const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
   });
 
   useEffect(() => {
-  let isMounted = true;
+    let isMounted = true;
 
-  const fetchZones = () => {
-    apiGet<Zone[]>("/api/zones")
-      .then((data) => {
-        if (isMounted) setZones(data);
-      })
-      .catch((err) => {
-        console.error("Failed to load zones", err);
-        toast({
-          variant: "destructive",
-          title: "API Error",
-          description: "Unable to load parking zones from server",
+    const fetchZones = () => {
+      apiGet<Zone[]>("/api/zones")
+        .then((data) => {
+          if (isMounted) setZones(data);
+        })
+        .catch((err) => {
+          console.error("Failed to load zones", err);
+          toast({
+            variant: "destructive",
+            title: "API Error",
+            description: "Unable to load parking zones from server",
+          });
         });
+    };
+
+    fetchZones();
+    const interval = setInterval(fetchZones, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+
+  const handleGenerateTicket = async () => {
+    if (!ticketData.vehicleNumber) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please enter a vehicle number",
       });
+      return;
+    }
+
+    try {
+       await apiPost("/api/enter", {
+       vehicle: ticketData.vehicleNumber,
+       type: ticketData.type,
+       zone: ticketData.zoneId || undefined,
+       slot: ticketData.slot || undefined,
+      });
+
+      toast({
+        title: "Ticket Generated",
+        description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
+      });
+
+      setIsTicketOpen(false);
+      setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
+      apiGet<Zone[]>("/api/zones").then(setZones);
+
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Generation Failed",
+        description: err?.message || "Could not generate ticket",
+      });
+    }
   };
-
-  // Initial load
-  fetchZones();
-
-  // 🔁 Auto refresh every 5 seconds
-  const interval = setInterval(fetchZones, 5000);
-
-  return () => {
-    isMounted = false;
-    clearInterval(interval);
-  };
-}, []);
-
-
-const handleGenerateTicket = async () => {
-  if (!ticketData.vehicleNumber) {
-    toast({
-      variant: "destructive",
-      title: "Error",
-      description: "Please enter a vehicle number",
-    });
-    return;
-  }
-
-  try {
-     await apiPost("/api/enter", {
-     vehicle: ticketData.vehicleNumber,
-     type: ticketData.type,
-     zone: ticketData.zoneId || undefined,
-     slot: ticketData.slot || undefined,
-    });
-
-
-    toast({
-      title: "Ticket Generated",
-      description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
-    });
-
-    setIsTicketOpen(false);
-    setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
-
-    // 🔁 FORCE REFRESH ZONES
-    apiGet<Zone[]>("/api/zones").then(setZones);
-
-  } catch (err: any) {
-    toast({
-      variant: "destructive",
-      title: "Generation Failed",
-      description: err?.message || "Could not generate ticket",
-    });
-  }
-};
 
 
   // Chart Data Preparation
   const barChartData = zones.map(zone => {
-    // Calculate percentages for each vehicle type based on specific limits if available, or total capacity
-    // If limits are available: Pct = (current / limit) * 100
-    // If only total capacity: Pct = (current / total) * 100 (This was the old behavior)
-    
     let heavyPct = 0;
     let mediumPct = 0;
     let lightPct = 0;
@@ -178,7 +169,6 @@ const handleGenerateTicket = async () => {
        mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
        lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
     } else {
-       // Fallback for old data or if limits are missing
        heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
        mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
        lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
@@ -191,12 +181,11 @@ const handleGenerateTicket = async () => {
       Light: lightPct,
       occupied: zone.occupied,
       capacity: zone.capacity,
-      limits: zone.limits, // Pass limits to tooltip
-      originalZone: zone // Store original zone object to access stats on hover
+      limits: zone.limits, 
+      originalZone: zone 
     };
   });
 
-  // Calculate Pie Data based on hovered zone or total
   const activeStats = hoveredZone ? hoveredZone.stats : {
     heavy: zones.reduce((acc, z) => acc + z.stats.heavy, 0),
     medium: zones.reduce((acc, z) => acc + z.stats.medium, 0),
@@ -216,28 +205,25 @@ const handleGenerateTicket = async () => {
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState<any>(null);
-  const [hasSearched, setHasSearched] = useState(false);
 
- const handleSearch = async (e: React.FormEvent) => {
-  e.preventDefault();
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
 
-  if (!searchQuery.trim()) return;
-
-  try {
-    const result = await apiGet<VehicleSearchResult>(
-      `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
-    );
-
-    setSearchResult(result);
-  } catch {
-    setSearchResult(null);
-    toast({
-      variant: "destructive",
-      title: "Not Found",
-      description: "Vehicle not currently parked",
-    });
-  }
-};
+    try {
+      const result = await apiGet<VehicleSearchResult>(
+        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+      );
+      setSearchResult(result);
+    } catch {
+      setSearchResult(null);
+      toast({
+        variant: "destructive",
+        title: "Not Found",
+        description: "Vehicle not currently parked",
+      });
+    }
+  };
 
 
   const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
@@ -260,10 +246,7 @@ const handleGenerateTicket = async () => {
           <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
         </div>
         <div className="flex items-center gap-4">
-           {/* Logo - Added here */}
            <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
-
-           {/* Mobile Menu Trigger is handled in Layout */}
            <Button variant="ghost" size="icon" className="md:hidden">
              <MoreHorizontal />
            </Button>
@@ -272,25 +255,10 @@ const handleGenerateTicket = async () => {
 
       {/* Top Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Vacancy */}
-        <TopCard 
-          title="Vacancy" 
-          value={totalVacancy}
-          dark={true}
-          isVacancy={true}
-        />
-        {/* Card 2: Occupancy */}
-        <TopCard 
-          title="Occupancy" 
-          value={totalOccupied} 
-        />
-        {/* Card 3: Total Capacity */}
-        <TopCard 
-          title="Total Capacity" 
-          value={totalCapacity} 
-        />
+        <TopCard title="Vacancy" value={totalVacancy} dark={true} isVacancy={true} />
+        <TopCard title="Occupancy" value={totalOccupied} />
+        <TopCard title="Total Capacity" value={totalCapacity} />
         
-        {/* Card 4: Composition (Moved from right column) */}
         <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 h-full flex items-center gap-3">
            <div className="w-[70px] h-[70px] relative flex-shrink-0">
              <ResponsiveContainer width="100%" height="100%">
@@ -339,7 +307,6 @@ const handleGenerateTicket = async () => {
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 gap-6 h-full mt-2">
-        {/* Full Width Column */}
         <div className="space-y-6">
           
           {/* Bar Chart Section */}
@@ -347,13 +314,14 @@ const handleGenerateTicket = async () => {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-4">
                 <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
+                
+                {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
                 {isAdmin && (
                   <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
                     <Ticket className="w-4 h-4" /> Generate Ticket
                   </Button>
                 )}
               </div>
-              {/* Legend for the chart - Inline on desktop */}
               <div className="hidden md:flex items-center gap-6">
                  <div className="flex items-center gap-2">
                     <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
@@ -374,7 +342,7 @@ const handleGenerateTicket = async () => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart 
                   data={barChartData} 
-                  barSize={24} // Smaller bars since there are 3 per zone
+                  barSize={24} 
                   margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
                   onMouseMove={(state: any) => {
                     if (state.activePayload) {
@@ -392,14 +360,14 @@ const handleGenerateTicket = async () => {
                     tickLine={false} 
                     tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
                     dy={10} 
-                    interval={0} // Show all zones
+                    interval={0} 
                   />
                   <YAxis 
                     axisLine={false} 
                     tickLine={false} 
                     tick={{fill: '#64748b', fontSize: 12}} 
                     unit="%"
-                    domain={[0, 100]} // Fixed scale 0-100%
+                    domain={[0, 100]} 
                     allowDataOverflow={true}
                   />
                   <Tooltip 
@@ -408,7 +376,6 @@ const handleGenerateTicket = async () => {
                       if (active && payload && payload.length) {
                         const data = payload[0].payload;
                         const originalZone = data.originalZone;
-                        
                         return (
                           <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-lg text-sm">
                             <p className="font-bold text-slate-800 mb-2">{label}</p>
@@ -419,7 +386,7 @@ const handleGenerateTicket = async () => {
                                   Heavy
                                 </span>
                                 <span className="font-mono font-medium">
-                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%{data.Heavy > 100 ? " — OVER 100%" : ""})
+                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)
                                 </span>
                               </div>
                               <div className="flex items-center justify-between gap-4 text-xs">
@@ -428,7 +395,7 @@ const handleGenerateTicket = async () => {
                                   Medium
                                 </span>
                                 <span className="font-mono font-medium">
-                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%{data.Medium > 100 ? " — OVER 100%" : ""})
+                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)
                                 </span>
                               </div>
                               <div className="flex items-center justify-between gap-4 text-xs">
@@ -437,7 +404,7 @@ const handleGenerateTicket = async () => {
                                   Light
                                 </span>
                                 <span className="font-mono font-medium">
-                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%{data.Light > 100 ? " — OVER 100%" : ""})
+                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)
                                 </span>
                               </div>
                             </div>
@@ -447,40 +414,21 @@ const handleGenerateTicket = async () => {
                       return null;
                     }}
                   />
-                  {/* Unstacked bars (side by side) */}
                   <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]} name="Heavy">
-                    <LabelList 
-                        dataKey="Heavy" 
-                        position="center" 
-                        angle={-90}
-                        formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''}
-                        style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} 
-                    />
+                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
                   <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Medium">
-                    <LabelList 
-                        dataKey="Medium" 
-                        position="center" 
-                        angle={-90}
-                        formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''}
-                        style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} 
-                    />
+                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
                   <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Light">
-                    <LabelList 
-                        dataKey="Light" 
-                        position="center" 
-                        angle={-90}
-                        formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''}
-                        style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} 
-                    />
+                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Bottom Section: Live Zone Status (Zone Cards) & Search */}
+          {/* Bottom Section: Live Zone Overview & Search */}
           <div className="space-y-4">
              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -488,24 +436,16 @@ const handleGenerateTicket = async () => {
                    <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
                 </div>
 
-                {/* Admin Search Widget (Integrated into Header) */}
+                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
-  <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
-    <span className="font-bold">{searchResult.vehicle_number}</span>
-    <span>in {searchResult.zone_name}</span>
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full"
-      onClick={() => setSearchResult(null)}
-    >
-      ×
-    </Button>
-  </div>
-)}
-
+                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
+                          <span className="font-bold">{searchResult.vehicle_number}</span>
+                          <span>in {searchResult.zone_name}</span>
+                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full" onClick={() => setSearchResult(null)}>×</Button>
+                        </div>
+                      )}
                       <form onSubmit={handleSearch} className="flex gap-2">
                           <Input 
                               placeholder="Find Vehicle..." 
@@ -521,10 +461,9 @@ const handleGenerateTicket = async () => {
                 )}
              </div>
              
-             {/* 10 columns as requested */}
              <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
                 {zones.map((zone) => (
-                  <ZoneCard key={zone.id}zone={zone} />
+                  <ZoneCard key={zone.id} zone={zone} />
                 ))}
              </div>
           </div>
@@ -532,87 +471,59 @@ const handleGenerateTicket = async () => {
         </div>
       </div>
 
-      <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
-        <DialogContent 
-          hideOverlay 
-          className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0 data-[state=open]:slide-in-from-left-auto data-[state=open]:slide-in-from-top-0 data-[state=closed]:slide-out-to-right-full data-[state=closed]:slide-out-to-top-0"
-        >
-          <DialogHeader>
-            <DialogTitle>Generate Parking Ticket</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="vehicle-no" className="text-right">
-                Vehicle No.
-              </Label>
-              <Input
-                id="vehicle-no"
-                value={ticketData.vehicleNumber}
-                onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })}
-                className="col-span-3"
-                placeholder="KL-01-AB-1234"
-              />
+      {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
+      {isAdmin && (
+        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
+          <DialogContent 
+            hideOverlay 
+            className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
+          >
+            <DialogHeader>
+              <DialogTitle>Generate Parking Ticket</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="vehicle-no" className="text-right">Vehicle No.</Label>
+                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" placeholder="KL-01-AB-1234" />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="vehicle-type" className="text-right">Type</Label>
+                <Select value={ticketData.type} onValueChange={(val: VehicleType) => setTicketData({ ...ticketData, type: val })}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="light">Light Vehicle (Car/Jeep)</SelectItem>
+                    <SelectItem value="medium">Medium Vehicle (Van/Mini Bus)</SelectItem>
+                    <SelectItem value="heavy">Heavy Vehicle (Bus/Truck)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="zone" className="text-right">Zone</Label>
+                <Select value={ticketData.zoneId || "auto"} onValueChange={(val) => setTicketData({ ...ticketData, zoneId: val === "auto" ? "" : val })}>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Auto-assign (Any Available)" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[200px]">
+                    <SelectItem value="auto">Auto-assign (Any Available)</SelectItem>
+                    {zones.map((zone) => (
+                      <SelectItem key={zone.id} value={zone.id}>{zone.name} ({zone.capacity - zone.occupied} free)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="slot" className="text-right">Slot (Opt)</Label>
+                <Input id="slot" value={ticketData.slot} onChange={(e) => setTicketData({ ...ticketData, slot: e.target.value })} className="col-span-3" placeholder="e.g. A-12" />
+              </div>
             </div>
-            
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="vehicle-type" className="text-right">
-                Type
-              </Label>
-              <Select 
-                value={ticketData.type} 
-                onValueChange={(val: VehicleType) => setTicketData({ ...ticketData, type: val })}
-              >
-                <SelectTrigger className="col-span-3">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="light">Light Vehicle (Car/Jeep)</SelectItem>
-                  <SelectItem value="medium">Medium Vehicle (Van/Mini Bus)</SelectItem>
-                  <SelectItem value="heavy">Heavy Vehicle (Bus/Truck)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="zone" className="text-right">
-                Zone
-              </Label>
-              <Select 
-                value={ticketData.zoneId || "auto"} 
-                onValueChange={(val) => setTicketData({ ...ticketData, zoneId: val === "auto" ? "" : val })}
-              >
-                <SelectTrigger className="col-span-3">
-                  <SelectValue placeholder="Auto-assign (Any Available)" />
-                </SelectTrigger>
-                <SelectContent className="max-h-[200px]">
-                  <SelectItem value="auto">Auto-assign (Any Available)</SelectItem>
-                  {zones.map((zone) => (
-                    <SelectItem key={zone.id} value={zone.id}>
-                      {zone.name} ({zone.capacity - zone.occupied} free)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="slot" className="text-right">
-                Slot (Opt)
-              </Label>
-              <Input
-                id="slot"
-                value={ticketData.slot}
-                onChange={(e) => setTicketData({ ...ticketData, slot: e.target.value })}
-                className="col-span-3"
-                placeholder="e.g. A-12"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
