@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParking } from "@/lib/parking-context";
 import PoliceBackup, { VehicleRecord } from "@/components/PoliceBackup";
 import { Link } from "wouter";
-import { ArrowLeft, Database, Loader2 } from "lucide-react";
+import { ArrowLeft, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet, apiPost } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -48,7 +48,6 @@ export default function Backup() {
   /* ================= SAVE SNAPSHOT (BACKEND) ================= */
 
   const saveSnapshot = async () => {
-    setLoading(true);
     try {
       await apiPost("/api/snapshot", {});
       toast({
@@ -62,8 +61,6 @@ export default function Backup() {
         title: "Snapshot failed",
         description: "Could not save snapshot",
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -110,34 +107,17 @@ export default function Backup() {
         </div>
       </div>
 
-      {/* BACKUP PANEL (Restored to Original Dark Style) */}
+      {/* BACKUP PANEL */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        <div className="flex flex-col gap-2">
-          {/* THE ONLY SAVE SNAPSHOT BUTTON */}
-          <Button
-            onClick={saveSnapshot}
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 w-fit text-white"
-          >
-            {loading ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : null}
-            {loading ? "Processing..." : "Save Snapshot"}
-          </Button>
-
-          {/* SNAPSHOT LIST STATUS */}
-          <div className="text-sm text-zinc-400">
-            {snapshots.length === 0
-              ? "No backups available"
-              : `${snapshots.length} backups available`}
-          </div>
+        {/* TOP SECTION: Information only (Button Removed as requested) */}
+        <div className="text-sm text-zinc-400">
+          {snapshots.length === 0
+            ? "No backups available"
+            : `${snapshots.length} backups available`}
         </div>
 
-        {/* Divider to separate Save from Restore */}
-        <hr className="border-zinc-800" />
-
-        {/* RESTORE PANEL */}
+        {/* RESTORE PANEL (Contains the working Police Backup UI) */}
         <div className="pt-2">
           <PoliceBackup
             getRecords={getRecords}
