@@ -159,7 +159,7 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         raise HTTPException(500, str(e))
     
 # ================================
-# REPORTS API (FIXED)
+# REPORTS API (FINAL)
 # ================================
 from datetime import date
 from fastapi import Query
@@ -172,8 +172,8 @@ def get_reports(
 ):
     """
     Returns parking reports:
-    - Current vehicles
-    - Past vehicles
+    - Current vehicles (exit_time IS NULL)
+    - Past vehicles (exit_time IS NOT NULL)
     - Filterable by zone & date
     """
 
@@ -194,12 +194,10 @@ def get_reports(
 
     params = {}
 
-    # Zone filter
     if zone and zone != "All Zones":
         query += " AND z.zone_id = :zone"
         params["zone"] = zone
 
-    # Date filter (based on entry time)
     if report_date:
         query += " AND DATE(pt.entry_time) = :report_date"
         params["report_date"] = report_date
@@ -208,7 +206,19 @@ def get_reports(
 
     rows = db.execute(text(query), params).mappings().all()
 
-    return rows
+    # 🔥 Convert datetime → ISO string (IMPORTANT)
+    return [
+        {
+            "ticketId": r["ticketid"],
+            "vehicle": r["vehicle"],
+            "type": r["type"],
+            "zone": r["zone"],
+            "entryTime": r["entrytime"].isoformat() if r["entrytime"] else None,
+            "exitTime": r["exittime"].isoformat() if r["exittime"] else None,
+            "status": "INSIDE" if r["exittime"] is None else "EXITED",
+        }
+        for r in rows
+    ]
 
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
