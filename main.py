@@ -84,12 +84,13 @@ def trigger_auto_snapshot(db: Session):
 def startup_db_check():
     """Ensure essential tables exist and schema is current on boot."""
     with next(get_db()) as db:
+        # FIXED: Added NOT NULL to ensure the search and snapshot logic is stable
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id SERIAL PRIMARY KEY,
                 snapshot_time TIMESTAMP DEFAULT NOW(),
                 records_count INTEGER,
-                data TEXT
+                data TEXT NOT NULL
             )
         """))
         db.commit()
@@ -157,6 +158,25 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
     """), {"zone_id": zone_id}).mappings().all()
     return rows
 
+# ================== VEHICLE SEARCH (ADDED FIX) ==================
+@app.get("/api/search")
+def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
+    """Search for an active vehicle by plate number (fuzzy match)."""
+    search_term = q.strip().replace(" ", "").upper()
+    row = db.execute(text("""
+        SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
+        FROM parking_tickets pt
+        JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+        JOIN parking_zones z ON pt.zone_id = z.zone_id
+        WHERE REPLACE(UPPER(v.vehicle_number), ' ', '') LIKE :q 
+          AND pt.exit_time IS NULL
+        LIMIT 1
+    """), {"q": f"%{search_term}%"}).mappings().first()
+    
+    if not row:
+        raise HTTPException(404, "Vehicle not found")
+    return dict(row)
+
 # ================== ENTER VEHICLE ==================
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
@@ -206,9 +226,9 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         """), {"z": z["zone_id"], "t": vt})
 
         # --- SYNC & BACKUP ---
-        db.flush() # Send changes to DB but don't commit yet
-        trigger_auto_snapshot(db) # Now the snapshot sees the new vehicle
-        db.commit() # Complete transaction
+        db.flush() 
+        trigger_auto_snapshot(db) 
+        db.commit() 
 
         return {"success": True, "ticket": ticket_code}
 
@@ -327,7 +347,6 @@ def get_snapshots(db: Session = Depends(get_db)):
         result = []
         for r in rows:
             item = dict(r)
-            # Parse the stringified JSON back into a Python list for React
             if item["data"]:
                 item["data"] = json.loads(item["data"])
             result.append(item)
