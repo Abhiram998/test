@@ -5,25 +5,70 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { useEffect, useState } from "react";
+import { apiGet } from "@/lib/api";
+
 
 export default function AreaDetails() {
   const { id } = useParams();
   const { zones, isAdmin } = useParking();
   const zone = zones.find(z => z.id === id);
+  const [vehicles, setVehicles] = useState<any[]>([]);
 
   if (!zone) return <div>Zone not found</div>;
 
-  const percentage = Math.round((zone.occupied / zone.capacity) * 100);
+  useEffect(() => {
+    if (!id) return;
+
+    // Function to fetch data
+    const fetchVehicles = () => {
+      apiGet<any[]>(`/api/zones/${id}/vehicles`)
+        .then(setVehicles)
+        .catch(err => {
+          console.error("Failed to load vehicles for zone", err);
+          setVehicles([]);
+        });
+    };
+
+    // Initial fetch
+    fetchVehicles();
+
+    // Set up polling interval (every 5 seconds)
+    const interval = setInterval(fetchVehicles, 5000);
+
+    // Clean up interval on unmount
+    return () => clearInterval(interval);
+  }, [id, zone?.occupied]);
+
+
+  const occupiedCount = vehicles.length;
+  const percentage = Math.round((occupiedCount / zone.capacity) * 100);
   const isFull = percentage >= 100;
 
   const vehicleTypeData = [
-    { name: 'Light (Cars/Jeeps)', value: zone.stats.light, color: 'hsl(var(--primary))', icon: Car },
-    { name: 'Medium (Vans/Minibus)', value: zone.stats.medium, color: '#f59e0b', icon: Truck }, // amber-500
-    { name: 'Heavy (Buses/Trucks)', value: zone.stats.heavy, color: '#ef4444', icon: Bus }, // red-500
+    {
+      name: 'Light (Cars/Jeeps)',
+      value: vehicles.filter(v => v.type === 'light').length,
+      color: 'hsl(var(--primary))',
+      icon: Car
+    },
+    {
+      name: 'Medium (Vans/Minibus)',
+      value: vehicles.filter(v => v.type === 'medium').length,
+      color: '#f59e0b',
+      icon: Truck
+    },
+    {
+      name: 'Heavy (Buses/Trucks)',
+      value: vehicles.filter(v => v.type === 'heavy').length,
+      color: '#ef4444',
+      icon: Bus
+    }
   ];
 
+
   const getVehicleIcon = (type: string) => {
-    switch(type) {
+    switch (type) {
       case 'heavy': return <Bus className="w-4 h-4" />;
       case 'medium': return <Truck className="w-4 h-4" />;
       default: return <Car className="w-4 h-4" />;
@@ -54,13 +99,13 @@ export default function AreaDetails() {
         </Card>
         <Card>
           <CardContent className="pt-6 text-center border-primary/20 bg-primary/5">
-            <div className="text-2xl font-bold text-primary">{zone.occupied}</div>
+            <div className="text-2xl font-bold text-primary">{occupiedCount}</div>
             <div className="text-xs text-muted-foreground uppercase">Occupied</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center border-green-500/20 bg-green-500/5">
-            <div className="text-2xl font-bold text-green-600">{zone.capacity - zone.occupied}</div>
+            <div className="text-2xl font-bold text-green-600">{zone.capacity - occupiedCount}</div>
             <div className="text-xs text-muted-foreground uppercase">Vacant</div>
           </CardContent>
         </Card>
@@ -93,7 +138,7 @@ export default function AreaDetails() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
-                <span className="text-2xl font-bold">{zone.occupied}</span>
+                <span className="text-2xl font-bold">{occupiedCount}</span>
                 <span className="text-[10px] text-muted-foreground uppercase">Vehicles</span>
               </div>
             </div>
@@ -125,26 +170,23 @@ export default function AreaDetails() {
             </div>
 
             <div className="grid grid-cols-5 sm:grid-cols-8 gap-2">
-               {Array.from({ length: zone.capacity }).map((_, i) => (
-                 <div 
-                   key={i}
-                   className={`aspect-square rounded-sm flex items-center justify-center text-[10px] font-mono transition-all border ${
-                     i < zone.occupied 
-                       ? "bg-slate-100 border-slate-200 dark:bg-slate-800 dark:border-slate-700 text-muted-foreground" 
-                       : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
-                   }`}
-                   title={i < zone.occupied ? "Occupied" : `Slot ${i+1} Free`}
-                 >
-                   {i < zone.occupied ? (
-                     // If occupied, try to show type icon based on vehicle index if available
-                     // Simplified matching for mockup since slots aren't 1:1 mapped to vehicle array indices strictly in this simple model
-                     // We'll just map the first N vehicles to the first N slots
-                     zone.vehicles[i] ? getVehicleIcon(zone.vehicles[i].type) : <Car className="w-3 h-3" />
-                   ) : (
-                     i+1
-                   )}
-                 </div>
-               ))}
+              {Array.from({ length: zone.capacity }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`aspect-square rounded-sm flex items-center justify-center text-[10px] font-mono transition-all border ${
+                    i < occupiedCount
+                      ? "bg-slate-100 border-slate-200 dark:bg-slate-800 dark:border-slate-700 text-muted-foreground"
+                      : "bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+                  }`}
+                  title={i < occupiedCount ? "Occupied" : `Slot ${i + 1} Free`}
+                >
+                  {i < occupiedCount ? (
+                    vehicles[i] ? getVehicleIcon(vehicles[i].type) : <Car className="w-3 h-3" />
+                  ) : (
+                    i + 1
+                  )}
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -160,36 +202,35 @@ export default function AreaDetails() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {zone.vehicles.length === 0 ? (
+            {vehicles.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 No vehicles currently parked in this zone.
               </div>
             ) : (
               <div className="divide-y">
-                {zone.vehicles.map((v, i) => (
+                {vehicles.map((v, i) => (
                   <div key={i} className="py-3 flex justify-between items-center">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${
-                        v.type === 'heavy' ? 'bg-red-500' : v.type === 'medium' ? 'bg-amber-500' : 'bg-primary'
-                      }`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${v.type === 'heavy' ? 'bg-red-500' : v.type === 'medium' ? 'bg-amber-500' : 'bg-primary'
+                        }`}>
                         {getVehicleIcon(v.type)}
                       </div>
                       <div>
                         <div className="font-mono font-medium">{v.number}</div>
                         <div className="flex gap-2 items-center">
                           <span className="text-xs text-muted-foreground">Ticket: {v.ticketId}</span>
-                          <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${
-                            v.type === 'heavy' ? 'border-red-200 bg-red-50 text-red-700' : 
-                            v.type === 'medium' ? 'border-amber-200 bg-amber-50 text-amber-700' : 
-                            'border-blue-200 bg-blue-50 text-blue-700'
-                          }`}>
+                          <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${v.type === 'heavy' ? 'border-red-200 bg-red-50 text-red-700' :
+                              v.type === 'medium' ? 'border-amber-200 bg-amber-50 text-amber-700' :
+                                'border-blue-200 bg-blue-50 text-blue-700'
+                            }`}>
                             {v.type}
                           </span>
                         </div>
                       </div>
                     </div>
                     <div className="text-sm text-muted-foreground font-mono">
-                      {v.entryTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      {/* Note: Ensure entryTime is a Date object if using .toLocaleTimeString() */}
+                      {v.entryTime instanceof Date ? v.entryTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : v.entryTime}
                     </div>
                   </div>
                 ))}
