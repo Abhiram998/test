@@ -1,7 +1,23 @@
 import { useEffect, useState } from "react";
+import { format, isValid } from "date-fns";
+import { 
+  Calendar as CalendarIcon, 
+  Download, 
+  Loader2, 
+  History, 
+  SearchX, 
+  Clock 
+} from "lucide-react";
+
 import { apiGet } from "@/lib/api";
+import { useParking } from "@/lib/parking-context";
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Popover,
   PopoverContent,
@@ -14,24 +30,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { format } from "date-fns";
-import {
-  Calendar as CalendarIcon,
-  Download,
-  FileText,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
 
-/* ================= TYPES ================= */
-
+/* ================= TYPES (API CONTRACT) ================= */
 type ReportRow = {
   ticketId: string;
   vehicle: string;
@@ -39,151 +39,142 @@ type ReportRow = {
   zone: string;
   entryTime: string;
   exitTime: string | null;
+  status: "INSIDE" | "EXITED";
 };
-
-/* ================= COMPONENT ================= */
 
 export default function Report() {
   const { toast } = useToast();
+  const { zones } = useParking();
 
+  // Filters State
   const [date, setDate] = useState<Date | undefined>(new Date());
-  const [selectedZone, setSelectedZone] = useState<string>("All Zones");
+  const [selectedZone, setSelectedZone] = useState<string>("all");
+  
+  // Data State
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  /* ================= FETCH REPORTS ================= */
-
+  /* ================= FETCH LOGIC ================= */
   useEffect(() => {
     if (!date) return;
 
-    setLoading(true);
+    const fetchReports = async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        params.append("report_date", format(date, "yyyy-MM-dd"));
+        
+        if (selectedZone !== "all") {
+          params.append("zone", selectedZone);
+        }
 
-    const params = new URLSearchParams();
-    params.append("report_date", format(date, "yyyy-MM-dd"));
-
-    if (selectedZone !== "All Zones") {
-      params.append("zone", selectedZone);
-    }
-
-    apiGet<ReportRow[]>(`/api/reports?${params.toString()}`)
-      .then(setReports)
-      .catch(() => {
+        const data = await apiGet<ReportRow[]>(`/api/reports?${params.toString()}`);
+        setReports(data);
+      } catch (err) {
         toast({
           variant: "destructive",
-          title: "Failed to load report",
-          description: "Could not fetch report data from server",
+          title: "Network Error",
+          description: "Could not retrieve history logs from the server.",
         });
-      })
-      .finally(() => setLoading(false));
-  }, [date, selectedZone]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  /* ================= CSV DOWNLOAD ================= */
+    fetchReports();
+  }, [date, selectedZone, toast]);
 
-  const downloadCSV = (rows: ReportRow[], filename: string) => {
-    const header =
-      "Ticket ID,Vehicle,Type,Zone,Entry Time,Exit Time\n";
-
-    const body = rows
-      .map(
-        (r) =>
-          `${r.ticketId},${r.vehicle},${r.type},${r.zone},${r.entryTime},${r.exitTime ?? ""}`
-      )
-      .join("\n");
-
-    const csv = "data:text/csv;charset=utf-8," + header + body;
-    const uri = encodeURI(csv);
-
-    const link = document.createElement("a");
-    link.href = uri;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  /* ================= FORMATTERS ================= */
+  const formatTime = (isoString: string | null) => {
+    if (!isoString) return "—";
+    const d = new Date(isoString);
+    return isValid(d) ? format(d, "hh:mm a") : "Invalid Date";
   };
 
-  const handleDownloadCurrent = () => {
-    downloadCSV(
-      reports,
-      `parking_report_${format(new Date(), "yyyy-MM-dd")}.csv`
-    );
+  const exportToCSV = () => {
+    const headers = "Ticket ID,Vehicle,Type,Zone,Entry Time,Exit Time,Status\n";
+    const csvContent = reports.map(r => 
+      `${r.ticketId},${r.vehicle},${r.type},${r.zone},${r.entryTime},${r.exitTime || ""},${r.status}`
+    ).join("\n");
 
-    toast({
-      title: "Report downloaded",
-      description: "Current report CSV generated",
-    });
+    const blob = new Blob([headers + csvContent], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Parking_Report_${format(date || new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
   };
-
-  /* ================= UNIQUE ZONES ================= */
-
-  const uniqueZones = Array.from(
-    new Set(reports.map((r) => r.zone))
-  );
-
-  /* ================= UI ================= */
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
-          <p className="text-muted-foreground">
-            Vehicle entry & exit history.
-          </p>
+    <div className="space-y-6 max-w-7xl mx-auto p-4 animate-in fade-in duration-500">
+      
+      {/* HEADER SECTION */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-lg">
+            <History className="w-6 h-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Vehicle History</h1>
+            <p className="text-muted-foreground text-sm">
+              Auditing all arrivals and departures for {date ? format(date, "PPP") : "Selected Date"}
+            </p>
+          </div>
         </div>
-
-        <Button onClick={handleDownloadCurrent} className="gap-2">
-          <Download className="w-4 h-4" />
-          Download Current Report
+        <Button 
+          onClick={exportToCSV} 
+          disabled={reports.length === 0} 
+          variant="outline"
+          className="bg-background shadow-sm"
+        >
+          <Download className="w-4 h-4 mr-2" /> Export CSV
         </Button>
       </div>
 
-      {/* FILTER */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Filter Reports</CardTitle>
-          <CardDescription>
-            Filter by zone and entry date.
-          </CardDescription>
-        </CardHeader>
-
-        <CardContent>
-          <div className="flex flex-col md:flex-row gap-4 items-end">
-            {/* ZONE */}
-            <div className="grid w-full md:w-[200px] gap-2">
-              <label className="text-sm font-medium">Zone</label>
+      {/* FILTER CONTROLS */}
+      <Card className="border-primary/5 shadow-sm">
+        <CardContent className="pt-6">
+          <div className="flex flex-wrap gap-6 items-end">
+            
+            {/* Zone Dropdown */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Parking Zone
+              </label>
               <Select value={selectedZone} onValueChange={setSelectedZone}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="All Zones" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="All Zones">All Zones</SelectItem>
-                  {uniqueZones.map((z) => (
-                    <SelectItem key={z} value={z}>
-                      {z}
+                  <SelectItem value="all">All Zones</SelectItem>
+                  {zones.map((z) => (
+                    <SelectItem key={z.id} value={z.id}>
+                      {z.name} ({z.id})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
-            {/* DATE */}
-            <div className="grid w-full md:w-[240px] gap-2">
-              <label className="text-sm font-medium">Date</label>
+            {/* Date Picker */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Report Date
+              </label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     className={cn(
-                      "w-full justify-start text-left font-normal",
+                      "w-[240px] justify-start text-left font-normal",
                       !date && "text-muted-foreground"
                     )}
                   >
                     <CalendarIcon className="mr-2 h-4 w-4" />
-                    {date ? format(date, "PPP") : "Pick a date"}
+                    {date ? format(date, "PPP") : "Select a date"}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0">
+                <PopoverContent className="w-auto p-0" align="start">
                   <Calendar
                     mode="single"
                     selected={date}
@@ -193,52 +184,79 @@ export default function Report() {
                 </PopoverContent>
               </Popover>
             </div>
+
           </div>
         </CardContent>
       </Card>
 
-      {/* PREVIEW */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Preview</CardTitle>
-        </CardHeader>
-
-        <CardContent>
+      {/* DATA TABLE */}
+      <Card className="border-primary/5 shadow-sm overflow-hidden">
+        <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-12">Loading report...</div>
+            <div className="py-24 flex flex-col items-center justify-center gap-4">
+              <Loader2 className="w-10 h-10 animate-spin text-primary/40" />
+              <p className="text-sm text-muted-foreground font-medium animate-pulse">
+                Synchronizing records...
+              </p>
+            </div>
           ) : reports.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-              No records found for the selected criteria
+            <div className="py-32 text-center flex flex-col items-center gap-4">
+              <SearchX className="w-12 h-12 text-muted-foreground/20" />
+              <div className="space-y-1">
+                <h3 className="text-lg font-semibold">No activity found</h3>
+                <p className="text-sm text-muted-foreground max-w-xs mx-auto">
+                  No vehicle movements were recorded for this date and zone combination.
+                </p>
+              </div>
             </div>
           ) : (
-            <div className="rounded-md border overflow-x-auto">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="p-4">#</th>
-                    <th className="p-4">Ticket</th>
-                    <th className="p-4">Vehicle</th>
-                    <th className="p-4">Type</th>
-                    <th className="p-4">Zone</th>
-                    <th className="p-4">Entry Time</th>
-                    <th className="p-4">Exit Time</th>
+                  <tr className="bg-muted/50 border-b">
+                    <th className="p-4 text-left font-semibold">Ticket ID</th>
+                    <th className="p-4 text-left font-semibold">Vehicle No.</th>
+                    <th className="p-4 text-center font-semibold">Type</th>
+                    <th className="p-4 text-center font-semibold">Zone</th>
+                    <th className="p-4 text-right font-semibold">Entry Time</th>
+                    <th className="p-4 text-right font-semibold">Exit Time</th>
+                    <th className="p-4 text-center font-semibold">Status</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {reports.map((r, i) => (
-                    <tr key={r.ticketId} className="border-b">
-                      <td className="p-4">{i + 1}</td>
-                      <td className="p-4 font-mono">{r.ticketId}</td>
-                      <td className="p-4">{r.vehicle}</td>
-                      <td className="p-4">{r.type}</td>
-                      <td className="p-4">{r.zone}</td>
-                      <td className="p-4 font-mono">
-                        {new Date(r.entryTime).toLocaleString()}
+                <tbody className="divide-y divide-border/50">
+                  {reports.map((r) => (
+                    <tr key={r.ticketId} className="hover:bg-muted/30 transition-colors">
+                      <td className="p-4 font-mono text-xs font-bold text-primary tracking-tight">
+                        {r.ticketId}
                       </td>
-                      <td className="p-4 font-mono">
-                        {r.exitTime
-                          ? new Date(r.exitTime).toLocaleString()
-                          : "Inside"}
+                      <td className="p-4 font-semibold uppercase tracking-wider">
+                        {r.vehicle}
+                      </td>
+                      <td className="p-4 text-center">
+                        <Badge variant="outline" className="text-[10px] font-bold uppercase">
+                          {r.type}
+                        </Badge>
+                      </td>
+                      <td className="p-4 text-center font-medium">
+                        {r.zone}
+                      </td>
+                      <td className="p-4 text-right font-mono text-[11px] text-muted-foreground">
+                        {formatTime(r.entryTime)}
+                      </td>
+                      <td className="p-4 text-right font-mono text-[11px] text-muted-foreground">
+                        {formatTime(r.exitTime)}
+                      </td>
+                      <td className="p-4 text-center">
+                        <Badge 
+                          className={cn(
+                            "rounded px-2 py-0.5 text-[10px] font-bold border-0",
+                            r.status === "INSIDE" 
+                              ? "bg-emerald-100 text-emerald-700 shadow-sm" 
+                              : "bg-slate-100 text-slate-600"
+                          )}
+                        >
+                          {r.status}
+                        </Badge>
                       </td>
                     </tr>
                   ))}
@@ -248,6 +266,13 @@ export default function Report() {
           )}
         </CardContent>
       </Card>
+
+      {/* FOOTER INFO */}
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-muted/20 p-3 rounded-lg border border-dashed">
+        <Clock className="w-3.5 h-3.5" />
+        Note: Records include vehicles present during any point of the 24-hour period of the selected date.
+      </div>
+
     </div>
   );
 }
