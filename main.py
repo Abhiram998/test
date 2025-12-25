@@ -34,11 +34,7 @@ app.add_middleware(
 # ================== HELPERS ==================
 
 def trigger_auto_snapshot(db: Session):
-    """
-    Captures the full system state (count + actual vehicle records).
-    This ensures the 'data' column is never NULL.
-    """
-    # 1. Ensure table structure is correct (including the 'data' column)
+    """Captures system state for backups."""
     db.execute(text("""
         CREATE TABLE IF NOT EXISTS snapshots (
             id SERIAL PRIMARY KEY,
@@ -48,7 +44,6 @@ def trigger_auto_snapshot(db: Session):
         )
     """))
 
-    # 2. Fetch all vehicles currently 'INSIDE' to create a portable backup
     rows = db.execute(text("""
         SELECT 
             v.vehicle_number AS plate,
@@ -62,7 +57,6 @@ def trigger_auto_snapshot(db: Session):
         WHERE pt.exit_time IS NULL
     """)).mappings().all()
 
-    # Convert rows to serializable list and format timestamps
     records = []
     for r in rows:
         item = dict(r)
@@ -70,21 +64,15 @@ def trigger_auto_snapshot(db: Session):
             item["timeIn"] = item["timeIn"].isoformat()
         records.append(item)
 
-    # 3. Insert the full JSON payload
     db.execute(text("""
         INSERT INTO snapshots (records_count, data) 
         VALUES (:count, :data)
-    """), {
-        "count": len(records), 
-        "data": json.dumps(records)
-    })
+    """), {"count": len(records), "data": json.dumps(records)})
 
 # ================== STARTUP ==================
 @app.on_event("startup")
 def startup_db_check():
-    """Ensure essential tables exist and schema is current on boot."""
     with next(get_db()) as db:
-        # Fixed: Added NOT NULL to ensure the search and snapshot logic is stable
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id SERIAL PRIMARY KEY,
@@ -97,25 +85,17 @@ def startup_db_check():
 
 # ================== ROOT & HEALTH ==================
 @app.get("/api")
-def root():
-    return {"status": "ok"}
+def root(): return {"status": "ok"}
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "db_configured": DATABASE_URL is not None}
+def health(): return {"status": "ok", "db_configured": DATABASE_URL is not None}
 
 # ================== LIVE DASHBOARD ==================
 @app.get("/api/zones")
 def get_zones(db: Session = Depends(get_db)):
     rows = db.execute(text("""
-        SELECT
-            z.zone_id,
-            z.zone_name,
-            z.total_capacity,
-            z.current_occupied,
-            vt.type_name,
-            zl.max_vehicles,
-            zl.current_count
+        SELECT z.zone_id, z.zone_name, z.total_capacity, z.current_occupied,
+               vt.type_name, zl.max_vehicles, zl.current_count
         FROM parking_zones z
         JOIN zone_type_limits zl ON zl.zone_id = z.zone_id
         JOIN vehicle_types vt ON vt.id = zl.vehicle_type_id
@@ -127,9 +107,7 @@ def get_zones(db: Session = Depends(get_db)):
     for r in rows:
         if r.zone_id not in zones:
             zones[r.zone_id] = {
-                "id": r.zone_id,
-                "name": r.zone_name,
-                "capacity": r.total_capacity,
+                "id": r.zone_id, "name": r.zone_name, "capacity": r.total_capacity,
                 "occupied": r.current_occupied,
                 "limits": {"light": 0, "medium": 0, "heavy": 0},
                 "stats": {"light": 0, "medium": 0, "heavy": 0},
@@ -137,257 +115,142 @@ def get_zones(db: Session = Depends(get_db)):
         vtype = r.type_name.lower()
         zones[r.zone_id]["limits"][vtype] = r.max_vehicles
         zones[r.zone_id]["stats"][vtype] = r.current_count
-
     return list(zones.values())
 
-# ================== LIVE VEHICLES ==================
 @app.get("/api/zones/{zone_id}/vehicles")
 def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
     rows = db.execute(text("""
-        SELECT
-            v.vehicle_number AS number,
-            vt.type_name AS type,
-            pt.ticket_code AS "ticketId",
-            pt.entry_time AS "entryTime"
+        SELECT v.vehicle_number AS number, vt.type_name AS type,
+               pt.ticket_code AS "ticketId", pt.entry_time AS "entryTime"
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
-        WHERE pt.zone_id = :zone_id
-          AND pt.exit_time IS NULL
+        WHERE pt.zone_id = :zone_id AND pt.exit_time IS NULL
         ORDER BY pt.entry_time DESC
     """), {"zone_id": zone_id}).mappings().all()
     return rows
 
-# ================== VEHICLE SEARCH (FIXED & IMPROVED) ==================
+# ================== VEHICLE SEARCH (FIXED MERGE) ==================
 @app.get("/api/search")
 def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
-    """
-    Search that ignores all hyphens, spaces, and case differences.
-    Matches 'KL-39-F-5003' even if stored as 'KL 39 F 5003' or 'KL39F5003'.
-    """
-    # 1. Clean the user's input (Remove hyphens and spaces)
-    search_term = q.strip().replace("-", "").replace(" ", "").upper()
+    # 1. Clean input
+    clean_q = q.strip().replace("-", "").replace(" ", "").upper()
     
-    # 2. SQL: Strip hyphens/spaces from the DB column and compare to the cleaned input
+    # 2. Optimized SQL Search
     row = db.execute(text("""
-        SELECT 
-            v.vehicle_number AS vehicle, 
-            pt.ticket_code, 
-            pt.entry_time, 
-            z.zone_name
+        SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
         JOIN parking_zones z ON pt.zone_id = z.zone_id
-        WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') = :q 
+        WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q 
           AND pt.exit_time IS NULL
         LIMIT 1
-    """), {"q": search_term}).mappings().first()
-    
-    # 3. Backup: If exact clean match fails, try a partial match
-    if not row:
-        row = db.execute(text("""
-            SELECT v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name
-            FROM parking_tickets pt
-            JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
-            JOIN parking_zones z ON pt.zone_id = z.zone_id
-            WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q
-              AND pt.exit_time IS NULL
-            LIMIT 1
-        """), {"q": f"%{search_term}%"}).mappings().first()
+    """), {"q": f"%{clean_q}%"}).mappings().first()
 
     if not row:
         raise HTTPException(404, "Vehicle not currently parked")
         
+    # 3. Compatibility Return (Sends both formats to the frontend)
     return {
         "vehicle": row["vehicle"],
-        "ticketId": row["ticket_code"], # Matches common frontend naming
+        "vehicle_number": row["vehicle"],
+        "ticketId": row["ticket_code"],
+        "ticket_code": row["ticket_code"],
         "entryTime": row["entry_time"].isoformat() if row["entry_time"] else None,
+        "entry_time": row["entry_time"].isoformat() if row["entry_time"] else None,
         "zone": row["zone_name"]
     }
 
-# ================== ENTER VEHICLE ==================
+# ================== ENTER/EXIT ==================
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
     try:
         vehicle = payload.get("vehicle")
         vtype = payload.get("type", "light").capitalize()
         zone = payload.get("zone")
-
-        if not vehicle:
-            raise HTTPException(400, "Vehicle number required")
+        if not vehicle: raise HTTPException(400, "Vehicle number required")
         
         z = db.execute(text("""
-            SELECT * FROM parking_zones
-            WHERE status='ACTIVE'
-              AND current_occupied < total_capacity
-              AND (:zone IS NULL OR zone_id = :zone)
-            ORDER BY zone_id
-            LIMIT 1
+            SELECT * FROM parking_zones WHERE status='ACTIVE'
+            AND current_occupied < total_capacity AND (:zone IS NULL OR zone_id = :zone)
+            ORDER BY zone_id LIMIT 1
         """), {"zone": zone}).mappings().first()
 
-        if not z:
-            raise HTTPException(400, "No available zone")
-
-        vt = db.execute(text("""
-            SELECT id FROM vehicle_types WHERE type_name=:t
-        """), {"t": vtype}).scalar()
-
+        if not z: raise HTTPException(400, "No available zone")
+        vt = db.execute(text("SELECT id FROM vehicle_types WHERE type_name=:t"), {"t": vtype}).scalar()
         vehicle_id = db.execute(text("""
             INSERT INTO vehicles(vehicle_number, vehicle_type_id)
             VALUES (:n, :t) RETURNING vehicle_id
         """), {"n": vehicle, "t": vt}).scalar()
 
         ticket_code = f"TKT-{int(datetime.now().timestamp())}"
-
         db.execute(text("""
             INSERT INTO parking_tickets(ticket_code, vehicle_id, zone_id, entry_time, status)
             VALUES (:c, :v, :z, NOW(), 'ACTIVE')
         """), {"c": ticket_code, "v": vehicle_id, "z": z["zone_id"]})
 
-        db.execute(text("""
-            UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id=:z
-        """), {"z": z["zone_id"]})
+        db.execute(text("UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id=:z"), {"z": z["zone_id"]})
+        db.execute(text("UPDATE zone_type_limits SET current_count = current_count + 1 WHERE zone_id=:z AND vehicle_type_id=:t"), {"z": z["zone_id"], "t": vt})
 
-        db.execute(text("""
-            UPDATE zone_type_limits SET current_count = current_count + 1
-            WHERE zone_id=:z AND vehicle_type_id=:t
-        """), {"z": z["zone_id"], "t": vt})
-
-        # --- SYNC & BACKUP ---
-        db.flush() 
-        trigger_auto_snapshot(db) 
-        db.commit() 
-
+        db.flush()
+        trigger_auto_snapshot(db)
+        db.commit()
         return {"success": True, "ticket": ticket_code}
-
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
 
-# ================== EXIT VEHICLE ==================
 @app.post("/api/exit")
 def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
     try:
-        ticket_code = payload.get("ticket_code")
-        if not ticket_code:
-            raise HTTPException(400, "Ticket code required")
+        # Accept both formats from frontend
+        ticket_code = payload.get("ticket_code") or payload.get("ticketId")
+        if not ticket_code: raise HTTPException(400, "Ticket code required")
 
         ticket = db.execute(text("""
-            SELECT pt.*, v.vehicle_type_id 
-            FROM parking_tickets pt
+            SELECT pt.*, v.vehicle_type_id FROM parking_tickets pt
             JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
             WHERE pt.ticket_code = :code AND pt.exit_time IS NULL
         """), {"code": ticket_code}).mappings().first()
 
-        if not ticket:
-            raise HTTPException(404, "Active ticket not found")
+        if not ticket: raise HTTPException(404, "Active ticket not found")
 
-        db.execute(text("""
-            UPDATE parking_tickets
-            SET exit_time = NOW(), status = 'EXITED'
-            WHERE ticket_code = :code
-        """), {"code": ticket_code})
+        db.execute(text("UPDATE parking_tickets SET exit_time = NOW(), status = 'EXITED' WHERE ticket_code = :code"), {"code": ticket_code})
+        db.execute(text("UPDATE parking_zones SET current_occupied = current_occupied - 1 WHERE zone_id = :z"), {"z": ticket["zone_id"]})
+        db.execute(text("UPDATE zone_type_limits SET current_count = current_count - 1 WHERE zone_id = :z AND vehicle_type_id = :t"), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
 
-        db.execute(text("""
-            UPDATE parking_zones 
-            SET current_occupied = current_occupied - 1 
-            WHERE zone_id = :z
-        """), {"z": ticket["zone_id"]})
-
-        db.execute(text("""
-            UPDATE zone_type_limits 
-            SET current_count = current_count - 1
-            WHERE zone_id = :z AND vehicle_type_id = :t
-        """), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
-
-        # --- SYNC & BACKUP ---
         db.flush()
         trigger_auto_snapshot(db)
         db.commit()
         return {"success": True, "message": "Vehicle exited successfully"}
-
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
 
-# ================== REPORTS API ==================
+# ================== REPORTS/SNAPSHOTS ==================
 @app.get("/api/reports")
-def get_reports(
-    zone: Optional[str] = Query(default=None),
-    report_date: Optional[date] = Query(default=None),
-    db: Session = Depends(get_db),
-):
-    query = """
-        SELECT
-            pt.ticket_code       AS ticketid,
-            v.vehicle_number     AS vehicle,
-            vt.type_name         AS type,
-            z.zone_id             AS zone,
-            pt.entry_time         AS entrytime,
-            pt.exit_time          AS exittime
-        FROM parking_tickets pt
-        JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
-        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
-        JOIN parking_zones z ON pt.zone_id = z.zone_id
-        WHERE 1=1
-    """
+def get_reports(zone: Optional[str] = Query(default=None), report_date: Optional[date] = Query(default=None), db: Session = Depends(get_db)):
+    query = "SELECT pt.ticket_code AS ticketid, v.vehicle_number AS vehicle, vt.type_name AS type, z.zone_id AS zone, pt.entry_time AS entrytime, pt.exit_time AS exittime FROM parking_tickets pt JOIN vehicles v ON pt.vehicle_id = v.vehicle_id JOIN vehicle_types vt ON v.vehicle_type_id = vt.id JOIN parking_zones z ON pt.zone_id = z.zone_id WHERE 1=1"
     params = {}
-
     if zone and zone not in ["All Zones", "all"]:
-        query += " AND z.zone_id = :zone"
-        params["zone"] = zone
-
+        query += " AND z.zone_id = :zone"; params["zone"] = zone
     if report_date:
-        query += """ 
-            AND pt.entry_time < (:report_date + INTERVAL '1 day')
-            AND (pt.exit_time IS NULL OR pt.exit_time >= :report_date)
-        """
+        query += " AND pt.entry_time < (:report_date + INTERVAL '1 day') AND (pt.exit_time IS NULL OR pt.exit_time >= :report_date)"
         params["report_date"] = report_date
-
-    query += " ORDER BY pt.entry_time DESC"
-    rows = db.execute(text(query), params).mappings().all()
-
-    return [
-        {
-            "ticketId": r["ticketid"],
-            "vehicle": r["vehicle"],
-            "type": r["type"],
-            "zone": r["zone"],
-            "entryTime": r["entrytime"].isoformat() if r["entrytime"] else None,
-            "exitTime": r["exittime"].isoformat() if r["exittime"] else None,
-            "status": "INSIDE" if r["exittime"] is None else "EXITED",
-        }
-        for r in rows
-    ]
-
-# ================== SNAPSHOTS (BACKUP LOGIC) ==================
+    rows = db.execute(text(query + " ORDER BY pt.entry_time DESC"), params).mappings().all()
+    return [{"ticketId": r["ticketid"], "vehicle": r["vehicle"], "type": r["type"], "zone": r["zone"], "entryTime": r["entrytime"].isoformat() if r["entrytime"] else None, "exitTime": r["exittime"].isoformat() if r["exittime"] else None, "status": "INSIDE" if r["exittime"] is None else "EXITED"} for r in rows]
 
 @app.get("/api/snapshots")
 def get_snapshots(db: Session = Depends(get_db)):
     try:
-        rows = db.execute(text("""
-            SELECT id, snapshot_time, records_count AS records, data
-            FROM snapshots 
-            ORDER BY snapshot_time DESC
-            LIMIT 20
-        """)).mappings().all()
-        
-        result = []
-        for r in rows:
-            item = dict(r)
-            if item["data"]:
-                item["data"] = json.loads(item["data"])
-            result.append(item)
-        return result
-    except Exception as e:
-        print(f"Snapshot fetch error: {e}")
-        return []
+        rows = db.execute(text("SELECT id, snapshot_time, records_count AS records, data FROM snapshots ORDER BY snapshot_time DESC LIMIT 20")).mappings().all()
+        return [{"id": r["id"], "snapshot_time": r["snapshot_time"], "records": r["records"], "data": json.loads(r["data"])} for r in rows]
+    except: return []
 
 @app.post("/api/snapshot")
 def create_snapshot(db: Session = Depends(get_db)):
     try:
-        trigger_auto_snapshot(db)
-        db.commit()
+        trigger_auto_snapshot(db); db.commit()
         return {"success": True}
     except Exception as e:
         db.rollback()
@@ -396,14 +259,9 @@ def create_snapshot(db: Session = Depends(get_db)):
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "dist" / "public"
-
 if PUBLIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
-
     @app.get("/", include_in_schema=False)
-    def serve_root():
-        return FileResponse(PUBLIC_DIR / "index.html")
-
+    def serve_root(): return FileResponse(PUBLIC_DIR / "index.html")
     @app.get("/{path:path}", include_in_schema=False)
-    def serve_spa(path: str):
-        return FileResponse(PUBLIC_DIR / "index.html")
+    def serve_spa(path: str): return FileResponse(PUBLIC_DIR / "index.html")
