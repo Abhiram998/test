@@ -28,22 +28,18 @@ export default function Backup() {
   const loadSnapshots = async () => {
     setLoading(true);
     try {
-      // 1. Ensure this endpoint matches your backend route exactly
+      // Frontend tries to fetch the list to show "X backups available"
       const data = await apiGet<SnapshotMeta[]>("/api/snapshots");
-      
-      // 2. Only update state if data is an actual array
       if (data && Array.isArray(data)) {
         setSnapshots(data);
-      } else {
-        setSnapshots([]);
       }
     } catch (err) {
-      // This catch block is what triggers the red toast in your image
-      console.error("Fetch error:", err);
+      // This catch triggers the red toast you see in your screenshot
+      console.error("Backup Sync Error:", err);
       toast({
         variant: "destructive",
-        title: "Failed to load backups",
-        description: "Could not fetch snapshot history from server",
+        title: "Sync Error",
+        description: "Could not sync snapshot history from server.",
       });
     } finally {
       setLoading(false);
@@ -73,8 +69,7 @@ export default function Backup() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      
-      {/* HEADER SECTION */}
+      {/* HEADER */}
       <div className="flex items-center gap-4 mb-2">
         <Link href="/admin">
           <Button variant="ghost" size="icon">
@@ -93,10 +88,10 @@ export default function Backup() {
         </div>
       </div>
 
-      {/* PRIMARY BACKUP PANEL (The Black Box) */}
+      {/* BACKUP PANEL - Dark UI */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        {/* SNAPSHOT COUNTER (Button removed to match your edited-image.png) */}
+        {/* STATUS TEXT - Top button removed as per edited-image.png */}
         <div className="text-sm text-zinc-400 font-medium">
           {loading ? (
             "Syncing..."
@@ -107,7 +102,7 @@ export default function Backup() {
           )}
         </div>
 
-        {/* MAIN COMPONENT AREA */}
+        {/* POLICE BACKUP COMPONENT */}
         <div className="pt-2">
           <PoliceBackup
             getRecords={getRecords}

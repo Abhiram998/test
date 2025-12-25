@@ -145,7 +145,7 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(500, str(e))
 
-# ================== EXIT VEHICLE (NEW) ==================
+# ================== EXIT VEHICLE ==================
 @app.post("/api/exit")
 def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
     try:
@@ -153,7 +153,6 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         if not ticket_code:
             raise HTTPException(400, "Ticket code required")
 
-        # 1. Check if active ticket exists
         ticket = db.execute(text("""
             SELECT pt.*, v.vehicle_type_id 
             FROM parking_tickets pt
@@ -164,21 +163,18 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         if not ticket:
             raise HTTPException(404, "Active ticket not found")
 
-        # 2. Update Ticket
         db.execute(text("""
             UPDATE parking_tickets
             SET exit_time = NOW(), status = 'EXITED'
             WHERE ticket_code = :code
         """), {"code": ticket_code})
 
-        # 3. Update Zone Capacity
         db.execute(text("""
             UPDATE parking_zones 
             SET current_occupied = current_occupied - 1 
             WHERE zone_id = :z
         """), {"z": ticket["zone_id"]})
 
-        # 4. Update Vehicle Type Limit Counters
         db.execute(text("""
             UPDATE zone_type_limits 
             SET current_count = current_count - 1
@@ -220,7 +216,6 @@ def get_reports(
         params["zone"] = zone
 
     if report_date:
-        # PostgreSQL Interval Logic: Captures all vehicles present during that date window
         query += """ 
             AND pt.entry_time < (:report_date + INTERVAL '1 day')
             AND (pt.exit_time IS NULL OR pt.exit_time >= :report_date)
@@ -228,7 +223,6 @@ def get_reports(
         params["report_date"] = report_date
 
     query += " ORDER BY pt.entry_time DESC"
-    
     rows = db.execute(text(query), params).mappings().all()
 
     return [
@@ -243,6 +237,52 @@ def get_reports(
         }
         for r in rows
     ]
+
+# ================== SNAPSHOTS (BACKUP LOGIC) ==================
+
+@app.get("/api/snapshots")
+def get_snapshots(db: Session = Depends(get_db)):
+    """ Fetches the history of snapshots for the Backup UI counter """
+    try:
+        # We wrap in a try block in case the snapshots table doesn't exist yet
+        rows = db.execute(text("""
+            SELECT snapshot_time, records_count AS records 
+            FROM snapshots 
+            ORDER BY snapshot_time DESC
+        """)).mappings().all()
+        return rows
+    except Exception:
+        # Return empty list so frontend doesn't show red error if table is missing
+        return []
+
+@app.post("/api/snapshot")
+def create_snapshot(db: Session = Depends(get_db)):
+    """ Saves a new snapshot of current 'INSIDE' vehicles """
+    try:
+        # 1. Ensure table exists
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id SERIAL PRIMARY KEY,
+                snapshot_time TIMESTAMP DEFAULT NOW(),
+                records_count INTEGER
+            )
+        """))
+
+        # 2. Count current vehicles inside
+        count = db.execute(text("""
+            SELECT COUNT(*) FROM parking_tickets WHERE exit_time IS NULL
+        """)).scalar()
+
+        # 3. Insert metadata
+        db.execute(text("""
+            INSERT INTO snapshots (records_count) VALUES (:count)
+        """), {"count": count})
+
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
 
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
