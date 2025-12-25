@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException, Depends, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from db import get_db
@@ -15,10 +15,6 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 print("🚀 FastAPI booting (Railway-safe mode)")
-if DATABASE_URL:
-    print("✅ DATABASE_URL detected")
-else:
-    print("⚠️ DATABASE_URL missing")
 
 # ================== APP ==================
 app = FastAPI(title="Nilakkal Parking Backend")
@@ -31,12 +27,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ================== ROOT ==================
+# ================== ROOT & HEALTH ==================
 @app.get("/api")
 def root():
     return {"status": "ok"}
 
-# ================== HEALTH ==================
 @app.get("/api/health")
 def health():
     return {"status": "ok", "db_configured": DATABASE_URL is not None}
@@ -93,7 +88,6 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
           AND pt.exit_time IS NULL
         ORDER BY pt.entry_time DESC
     """), {"zone_id": zone_id}).mappings().all()
-
     return rows
 
 # ================== ENTER VEHICLE ==================
@@ -106,9 +100,7 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
 
         if not vehicle:
             raise HTTPException(400, "Vehicle number required")
-        if vtype not in ("Light", "Medium", "Heavy"):
-            raise HTTPException(400, "Invalid vehicle type")
-
+        
         z = db.execute(text("""
             SELECT * FROM parking_zones
             WHERE status='ACTIVE'
@@ -138,44 +130,75 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
         """), {"c": ticket_code, "v": vehicle_id, "z": z["zone_id"]})
 
         db.execute(text("""
-            UPDATE parking_zones
-            SET current_occupied = current_occupied + 1
-            WHERE zone_id=:z
+            UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id=:z
         """), {"z": z["zone_id"]})
 
         db.execute(text("""
-            UPDATE zone_type_limits
-            SET current_count = current_count + 1
+            UPDATE zone_type_limits SET current_count = current_count + 1
             WHERE zone_id=:z AND vehicle_type_id=:t
         """), {"z": z["zone_id"], "t": vt})
 
         db.commit()
-        print("✅ COMMITTED:", ticket_code)
-
         return {"success": True, "ticket": ticket_code}
 
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
-    
-# ================================
-# REPORTS API (CORRECTED)
-# ================================
-from datetime import date
-from fastapi import Query
 
+# ================== EXIT VEHICLE (NEW) ==================
+@app.post("/api/exit")
+def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
+    try:
+        ticket_code = payload.get("ticket_code")
+        if not ticket_code:
+            raise HTTPException(400, "Ticket code required")
+
+        # 1. Check if active ticket exists
+        ticket = db.execute(text("""
+            SELECT pt.*, v.vehicle_type_id 
+            FROM parking_tickets pt
+            JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+            WHERE pt.ticket_code = :code AND pt.exit_time IS NULL
+        """), {"code": ticket_code}).mappings().first()
+
+        if not ticket:
+            raise HTTPException(404, "Active ticket not found")
+
+        # 2. Update Ticket
+        db.execute(text("""
+            UPDATE parking_tickets
+            SET exit_time = NOW(), status = 'EXITED'
+            WHERE ticket_code = :code
+        """), {"code": ticket_code})
+
+        # 3. Update Zone Capacity
+        db.execute(text("""
+            UPDATE parking_zones 
+            SET current_occupied = current_occupied - 1 
+            WHERE zone_id = :z
+        """), {"z": ticket["zone_id"]})
+
+        # 4. Update Vehicle Type Limit Counters
+        db.execute(text("""
+            UPDATE zone_type_limits 
+            SET current_count = current_count - 1
+            WHERE zone_id = :z AND vehicle_type_id = :t
+        """), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
+
+        db.commit()
+        return {"success": True, "message": "Vehicle exited successfully"}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
+
+# ================== REPORTS API ==================
 @app.get("/api/reports")
 def get_reports(
     zone: str | None = Query(default=None),
     report_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns parking reports:
-    - Logic FIX: Returns vehicles present on 'report_date' regardless of entry day
-    - Filterable by zone_id & date
-    """
-
     query = """
         SELECT
             pt.ticket_code       AS ticketid,
@@ -190,30 +213,24 @@ def get_reports(
         JOIN parking_zones z ON pt.zone_id = z.zone_id
         WHERE 1=1
     """
-
     params = {}
 
-    # 1. ZONE FILTER: Use zone_id (Z1, Z2)
     if zone and zone not in ["All Zones", "all"]:
         query += " AND z.zone_id = :zone"
         params["zone"] = zone
 
-    # 2. DATE LOGIC FIX: Catch vehicles active during that 24-hour window
     if report_date:
-        # Returns vehicles that entered ON or BEFORE report_date 
-        # AND (haven't left yet OR left AFTER report_date started)
+        # PostgreSQL Interval Logic: Captures all vehicles present during that date window
         query += """ 
-            AND DATE(pt.entry_time) <= :report_date 
-            AND (pt.exit_time IS NULL OR DATE(pt.exit_time) >= :report_date)
+            AND pt.entry_time < (:report_date + INTERVAL '1 day')
+            AND (pt.exit_time IS NULL OR pt.exit_time >= :report_date)
         """
         params["report_date"] = report_date
 
     query += " ORDER BY pt.entry_time DESC"
-
-    # Fetch rows
+    
     rows = db.execute(text(query), params).mappings().all()
 
-    # 3. DATA MAPPING FIX: Ensuring lowercase keys to match SQLAlchemy mappings
     return [
         {
             "ticketId": r["ticketid"],
@@ -230,15 +247,14 @@ def get_reports(
 # ================== STATIC FRONTEND ==================
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "dist" / "public"
-INDEX_HTML = PUBLIC_DIR / "index.html"
 
 if PUBLIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
 
     @app.get("/", include_in_schema=False)
     def serve_root():
-        return FileResponse(INDEX_HTML)
+        return FileResponse(PUBLIC_DIR / "index.html")
 
     @app.get("/{path:path}", include_in_schema=False)
     def serve_spa(path: str):
-        return FileResponse(INDEX_HTML)
+        return FileResponse(PUBLIC_DIR / "index.html")
