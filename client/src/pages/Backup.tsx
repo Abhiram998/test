@@ -45,25 +45,6 @@ export default function Backup() {
     loadSnapshots();
   }, []);
 
-  /* ================= SAVE SNAPSHOT (BACKEND) ================= */
-
-  const saveSnapshot = async () => {
-    try {
-      await apiPost("/api/snapshot", {});
-      toast({
-        title: "Snapshot saved",
-        description: "Parking data backed up successfully",
-      });
-      loadSnapshots();
-    } catch {
-      toast({
-        variant: "destructive",
-        title: "Snapshot failed",
-        description: "Could not save snapshot",
-      });
-    }
-  };
-
   /* ================= GET RECORDS (FOR RESTORE) ================= */
 
   const getRecords = async (): Promise<VehicleRecord[]> => {
@@ -110,14 +91,14 @@ export default function Backup() {
       {/* BACKUP PANEL */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
         
-        {/* TOP SECTION: Information only (Button Removed as requested) */}
+        {/* TOP SECTION: Information only (Redundant button removed) */}
         <div className="text-sm text-zinc-400">
           {snapshots.length === 0
             ? "No backups available"
             : `${snapshots.length} backups available`}
         </div>
 
-        {/* RESTORE PANEL (Contains the working Police Backup UI) */}
+        {/* RESTORE PANEL (Main functional area) */}
         <div className="pt-2">
           <PoliceBackup
             getRecords={getRecords}
