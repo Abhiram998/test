@@ -1,6 +1,6 @@
 import { VehicleType } from "@/lib/parking-context";
 import { ZoneCard } from "@/components/parking/ZoneCard";
-import { MapPin, Search, MoreHorizontal, Activity, Ticket } from "lucide-react";
+import { MapPin, Search, MoreHorizontal, Activity, Ticket, Clock, Car, Bus, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
@@ -8,7 +8,7 @@ import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiGet, apiPost } from "@/lib/api";
 import { useEffect } from "react";
-import { useParking } from "@/lib/parking-context"; // 🔹 Added this import
+import { useParking } from "@/lib/parking-context";
 
 import {
   Dialog,
@@ -62,29 +62,19 @@ type VehicleSearchResult = {
   zone_name: string;
   ticket_code: string;
   entry_time: string;
+  status?: string; // Added for enhanced info
 };
 
 
 export default function Home() {
-  // 🔐 FIXED: Now using the real global state instead of hardcoded true
   const { isAdmin } = useParking();
-
-  // 🔹 Zones from backend API
   const [zones, setZones] = useState<Zone[]>([]);
-
-  // 🔹 Derived totals
   const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
   const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
-
   const { toast } = useToast();
-  
-  // Calculate vacancy
   const totalVacancy = totalCapacity - totalOccupied;
-  
-  // State for interactive graph
   const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
 
-  // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
   const [ticketData, setTicketData] = useState({
     vehicleNumber: "",
@@ -93,9 +83,18 @@ export default function Home() {
     type: "light" as VehicleType
   });
 
+  // 🕒 HELPER: Fixes the "2:10 PM Issue" by formatting UTC to IST locally
+  const formatIST = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
   useEffect(() => {
     let isMounted = true;
-
     const fetchZones = () => {
       apiGet<Zone[]>("/api/zones")
         .then((data) => {
@@ -110,16 +109,13 @@ export default function Home() {
           });
         });
     };
-
     fetchZones();
     const interval = setInterval(fetchZones, 5000);
-
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
   }, []);
-
 
   const handleGenerateTicket = async () => {
     if (!ticketData.vehicleNumber) {
@@ -130,24 +126,20 @@ export default function Home() {
       });
       return;
     }
-
     try {
        await apiPost("/api/enter", {
-       vehicle: ticketData.vehicleNumber,
+       vehicle: ticketData.vehicleNumber.toUpperCase(), // Auto-uppercase for DB consistency
        type: ticketData.type,
        zone: ticketData.zoneId || undefined,
        slot: ticketData.slot || undefined,
       });
-
       toast({
         title: "Ticket Generated",
-        description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
+        description: `Vehicle ${ticketData.vehicleNumber.toUpperCase()} parked successfully`,
       });
-
       setIsTicketOpen(false);
       setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
       apiGet<Zone[]>("/api/zones").then(setZones);
-
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -157,13 +149,10 @@ export default function Home() {
     }
   };
 
-
-  // Chart Data Preparation
   const barChartData = zones.map(zone => {
     let heavyPct = 0;
     let mediumPct = 0;
     let lightPct = 0;
-
     if (zone.limits) {
        heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
        mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
@@ -173,7 +162,6 @@ export default function Home() {
        mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
        lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
     }
-
     return {
       name: zone.name.replace('Nilakkal Parking Zone ', 'P'),
       Heavy: heavyPct,
@@ -191,28 +179,25 @@ export default function Home() {
     medium: zones.reduce((acc, z) => acc + z.stats.medium, 0),
     light: zones.reduce((acc, z) => acc + z.stats.light, 0)
   };
-
   const activeOccupied = hoveredZone ? hoveredZone.occupied : totalOccupied;
   const activeCapacity = hoveredZone ? hoveredZone.capacity : totalCapacity;
   const activeOccupancyRate = activeCapacity > 0 ? Math.round((activeOccupied / activeCapacity) * 100) : 0;
-
   const pieData = [
     { name: 'Heavy', value: activeStats.heavy, color: '#1e293b' },
     { name: 'Medium', value: activeStats.medium, color: '#f59e0b' },
     { name: 'Light', value: activeStats.light, color: '#3b82f6' },
   ];
 
-  // Search state
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<any>(null);
+  const [searchResult, setSearchResult] = useState<VehicleSearchResult | null>(null);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
-
     try {
+      // 🔍 Enhanced: Case-insensitive search handled via query param
       const result = await apiGet<VehicleSearchResult>(
-        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+        `/api/search/vehicle?number=${encodeURIComponent(searchQuery.toUpperCase())}`
       );
       setSearchResult(result);
     } catch {
@@ -220,11 +205,10 @@ export default function Home() {
       toast({
         variant: "destructive",
         title: "Not Found",
-        description: "Vehicle not currently parked",
+        description: "Vehicle not currently parked. Please check the plate number.",
       });
     }
   };
-
 
   const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
     <div className={`rounded-xl p-3 shadow-sm border relative overflow-hidden group hover:shadow-md transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
@@ -243,7 +227,7 @@ export default function Home() {
       {/* Header */}
       <div className="flex items-center justify-between mb-1">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
+          <h1 className="text-xl font-bold text-slate-800">Nilakkal Parking Portal</h1>
         </div>
         <div className="flex items-center gap-4">
            <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
@@ -258,7 +242,6 @@ export default function Home() {
         <TopCard title="Vacancy" value={totalVacancy} dark={true} isVacancy={true} />
         <TopCard title="Occupancy" value={totalOccupied} />
         <TopCard title="Total Capacity" value={totalCapacity} />
-        
         <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 h-full flex items-center gap-3">
            <div className="w-[70px] h-[70px] relative flex-shrink-0">
              <ResponsiveContainer width="100%" height="100%">
@@ -281,7 +264,6 @@ export default function Home() {
                 <span className="text-xs font-bold text-slate-700">{activeOccupancyRate}%</span>
              </div>
            </div>
-
            <div className="flex-1 flex flex-col justify-center gap-1">
              <div className="flex justify-between items-center border-b border-slate-50 pb-1 mb-1">
                <span className="font-medium text-slate-500 text-xs">Composition</span>
@@ -289,7 +271,6 @@ export default function Home() {
                  {hoveredZone ? `P${hoveredZone.name.replace('Nilakkal Parking Zone ', '')}` : "Total"}
                </span>
              </div>
-             
              <div className="space-y-0.5">
                 {pieData.map((item, index) => (
                    <div key={index} className="flex items-center justify-between text-[10px]">
@@ -308,14 +289,10 @@ export default function Home() {
       {/* Main Grid */}
       <div className="grid grid-cols-1 gap-6 h-full mt-2">
         <div className="space-y-6">
-          
-          {/* Bar Chart Section */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-4">
                 <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
-                
-                {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
                 {isAdmin && (
                   <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
                     <Ticket className="w-4 h-4" /> Generate Ticket
@@ -340,39 +317,13 @@ export default function Home() {
             
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart 
-                  data={barChartData} 
-                  barSize={24} 
-                  margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
-                  onMouseMove={(state: any) => {
-                    if (state.activePayload) {
-                      setHoveredZone(state.activePayload[0].payload.originalZone);
-                    }
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredZone(null);
-                  }}
-                >
+                <BarChart data={barChartData} barSize={24} margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
+                  onMouseMove={(state: any) => { if (state.activePayload) setHoveredZone(state.activePayload[0].payload.originalZone); }}
+                  onMouseLeave={() => setHoveredZone(null)}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
-                    dy={10} 
-                    interval={0} 
-                  />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 12}} 
-                    unit="%"
-                    domain={[0, 100]} 
-                    allowDataOverflow={true}
-                  />
-                  <Tooltip 
-                    cursor={{ fill: '#f8fafc' }}
-                    content={({ active, payload, label }) => {
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} dy={10} interval={0} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} unit="%" domain={[0, 100]} allowDataOverflow={true} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} content={({ active, payload, label }) => {
                       if (active && payload && payload.length) {
                         const data = payload[0].payload;
                         const originalZone = data.originalZone;
@@ -381,31 +332,16 @@ export default function Home() {
                             <p className="font-bold text-slate-800 mb-2">{label}</p>
                             <div className="space-y-1">
                               <div className="flex items-center justify-between gap-4 text-xs">
-                                <span className="flex items-center gap-1.5 text-slate-500">
-                                  <div className="w-2 h-2 rounded-full bg-[#1e293b]"></div>
-                                  Heavy
-                                </span>
-                                <span className="font-mono font-medium">
-                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)
-                                </span>
+                                <span className="flex items-center gap-1.5 text-slate-500"><div className="w-2 h-2 rounded-full bg-[#1e293b]"></div>Heavy</span>
+                                <span className="font-mono font-medium">{originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)</span>
                               </div>
                               <div className="flex items-center justify-between gap-4 text-xs">
-                                <span className="flex items-center gap-1.5 text-slate-500">
-                                  <div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
-                                  Medium
-                                </span>
-                                <span className="font-mono font-medium">
-                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)
-                                </span>
+                                <span className="flex items-center gap-1.5 text-slate-500"><div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>Medium</span>
+                                <span className="font-mono font-medium">{originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)</span>
                               </div>
                               <div className="flex items-center justify-between gap-4 text-xs">
-                                <span className="flex items-center gap-1.5 text-slate-500">
-                                  <div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>
-                                  Light
-                                </span>
-                                <span className="font-mono font-medium">
-                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)
-                                </span>
+                                <span className="flex items-center gap-1.5 text-slate-500"><div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>Light</span>
+                                <span className="font-mono font-medium">{originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)</span>
                               </div>
                             </div>
                           </div>
@@ -428,7 +364,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Bottom Section: Live Zone Overview & Search */}
+          {/* Bottom Section: Live Zone Overview & Enhanced Search */}
           <div className="space-y-4">
              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -436,22 +372,29 @@ export default function Home() {
                    <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
                 </div>
 
-                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
-                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
-                          <span className="font-bold">{searchResult.vehicle_number}</span>
-                          <span>in {searchResult.zone_name}</span>
-                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full" onClick={() => setSearchResult(null)}>×</Button>
+                        <div className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md text-xs border border-blue-100 flex items-center gap-3 animate-in fade-in zoom-in-95 duration-200">
+                          <div className="flex flex-col">
+                            <span className="font-bold flex items-center gap-1 underline underline-offset-2">
+                              {searchResult.vehicle_number} 
+                              {searchResult.type_name === 'heavy' ? <Bus className="w-3 h-3"/> : searchResult.type_name === 'medium' ? <Truck className="w-3 h-3"/> : <Car className="w-3 h-3"/>}
+                            </span>
+                            <div className="flex items-center gap-2 text-[10px] opacity-80 mt-0.5">
+                              <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5"/> {searchResult.zone_name}</span>
+                              <span className="flex items-center gap-0.5"><Clock className="w-2.5 h-2.5"/> {formatIST(searchResult.entry_time)}</span>
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 hover:bg-blue-100 rounded-full text-blue-400" onClick={() => setSearchResult(null)}>×</Button>
                         </div>
                       )}
                       <form onSubmit={handleSearch} className="flex gap-2">
                           <Input 
-                              placeholder="Find Vehicle..." 
+                              placeholder="Find Vehicle Plate..." 
                               value={searchQuery}
-                              onChange={(e) => setSearchQuery(e.target.value)}
-                              className="bg-white w-[180px] h-9 text-sm"
+                              onChange={(e) => setSearchQuery(e.target.value.toUpperCase())}
+                              className="bg-white w-[180px] h-9 text-sm font-mono tracking-wider"
                           />
                           <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3">
                             <Search className="w-3.5 h-3.5" />
@@ -467,24 +410,20 @@ export default function Home() {
                 ))}
              </div>
           </div>
-
         </div>
       </div>
 
-      {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
+      {/* Ticket Dialog */}
       {isAdmin && (
-        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
-          <DialogContent 
-            hideOverlay 
-            className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
-          >
+        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen}>
+          <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Generate Parking Ticket</DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="vehicle-no" className="text-right">Vehicle No.</Label>
-                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" placeholder="KL-01-AB-1234" />
+                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value.toUpperCase() })} className="col-span-3 font-mono" placeholder="KL-01-AB-1234" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="vehicle-type" className="text-right">Type</Label>
@@ -519,11 +458,11 @@ export default function Home() {
               </div>
             </div>
             <DialogFooter>
-              <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
+              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" onClick={handleGenerateTicket}>Generate Ticket</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
     </div>
   );
-};
+}
