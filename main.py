@@ -189,7 +189,7 @@ def get_zones(db: Session = Depends(get_db)):
         JOIN zone_type_limits zl ON zl.zone_id = z.zone_id
         JOIN vehicle_types vt ON vt.id = zl.vehicle_type_id
         WHERE UPPER(z.status) = 'ACTIVE'
-        ORDER BY z.zone_id
+        ORDER BY z.created_at ASC
     """)).fetchall()
 
     zones = {}
@@ -671,7 +671,7 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
             WHERE status='ACTIVE'
               AND current_occupied < total_capacity
               AND (:zone IS NULL OR zone_id = :zone)
-            ORDER BY zone_id
+            ORDER BY created_at ASC
             LIMIT 1
         """), {"zone": zone}).mappings().first()
 
