@@ -2,35 +2,69 @@ import { ArrowLeft, Calendar, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, AreaChart, Area } from "recharts";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  AreaChart,
+  Area,
+} from "recharts";
+import { useEffect, useState } from "react";
 
-const weeklyData = [
-  { day: "Mon", occupancy: 0 },
-  { day: "Tue", occupancy: 0 },
-  { day: "Wed", occupancy: 0 },
-  { day: "Thu", occupancy: 0 },
-  { day: "Fri", occupancy: 0 },
-  { day: "Sat", occupancy: 0 },
-  { day: "Sun", occupancy: 0 },
-];
-
-const tomorrowHourlyData = [
-  { time: "4am", prob: 0 },
-  { time: "8am", prob: 0 },
-  { time: "12pm", prob: 0 },
-  { time: "4pm", prob: 0 },
-  { time: "8pm", prob: 0 },
-  { time: "12am", prob: 0 },
-];
-
-const zonePredictions = Array.from({ length: 20 }, (_, i) => ({
-  id: `Z${i + 1}`,
-  prob: 0
-}));
+/* ===========================
+   COMPONENT
+=========================== */
 
 export default function Predictions() {
+  /* ---------------------------
+     STATE
+  --------------------------- */
+  const [weeklyData, setWeeklyData] = useState<
+    { day: string; occupancy: number }[]
+  >([]);
+
+  const [tomorrowProbability, setTomorrowProbability] = useState(0);
+
+  const [zonePredictions, setZonePredictions] = useState<
+    { id: string; prob: number }[]
+  >([]);
+
+  /* ---------------------------
+     API FETCH
+  --------------------------- */
+  useEffect(() => {
+    fetch("/api/predictions")
+      .then((res) => res.json())
+      .then((data) => {
+        // Past 7 days trend
+        setWeeklyData(data.past7Days || []);
+
+        // Tomorrow probability
+        setTomorrowProbability(data.tomorrow?.probability || 0);
+
+        // Zone-wise probabilities
+        setZonePredictions(
+          (data.zones || []).map((z: any) => ({
+            id: z.zone,
+            prob: z.probability,
+          }))
+        );
+      })
+      .catch((err) => {
+        console.error("Prediction API error:", err);
+      });
+  }, []);
+
+  /* ===========================
+     RENDER
+  =========================== */
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* HEADER */}
       <div className="flex items-center gap-4 mb-2">
         <Link href="/">
           <Button variant="ghost" size="icon">
@@ -38,65 +72,83 @@ export default function Predictions() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Forecast & Analytics</h1>
-          <p className="text-muted-foreground">Smart parking predictions for pilgrims</p>
+          <h1 className="text-2xl font-bold text-foreground">
+            Forecast & Analytics
+          </h1>
+          <p className="text-muted-foreground">
+            Smart parking predictions for pilgrims
+          </p>
         </div>
       </div>
 
-      {/* Main Tomorrow Card */}
+      {/* TOMORROW CARD */}
       <Card className="bg-gradient-to-br from-primary to-blue-600 text-white border-none shadow-lg">
         <CardContent className="pt-6">
           <div className="flex justify-between items-start">
             <div>
               <div className="flex items-center gap-2 text-blue-100 mb-2">
                 <Calendar className="w-4 h-4" />
-                <span className="text-sm font-medium uppercase tracking-wider">Tomorrow's Outlook</span>
+                <span className="text-sm font-medium uppercase tracking-wider">
+                  Tomorrow's Outlook
+                </span>
               </div>
-              <h2 className="text-4xl font-bold mb-1">{Math.max(...tomorrowHourlyData.map(d => d.prob))}% Probability</h2>
+
+              <h2 className="text-4xl font-bold mb-1">
+                {tomorrowProbability}% Probability
+              </h2>
+
               <p className="text-blue-100">
-                {Math.max(...tomorrowHourlyData.map(d => d.prob)) > 50 
-                  ? "Expected to reach full capacity by 12:00 PM" 
+                {tomorrowProbability > 70
+                  ? "High probability of congestion"
                   : "Low probability of reaching full capacity"}
               </p>
             </div>
+
             <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
               <TrendingUp className="w-6 h-6 text-white" />
             </div>
           </div>
-          
+
+          {/* AREA CHART (kept for future extension) */}
           <div className="h-[150px] mt-6">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={tomorrowHourlyData}>
+              <AreaChart
+                data={[
+                  { time: "Morning", prob: tomorrowProbability },
+                  { time: "Afternoon", prob: tomorrowProbability },
+                  { time: "Evening", prob: tomorrowProbability },
+                ]}
+              >
                 <defs>
-                  <linearGradient id="colorProbWhite" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#fff" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#fff" stopOpacity={0}/>
+                  <linearGradient
+                    id="colorProbWhite"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop offset="5%" stopColor="#fff" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#fff" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="time" hide />
-                <Tooltip 
-                  contentStyle={{ 
-                    borderRadius: '8px', 
-                    border: 'none',
-                    backgroundColor: 'white',
-                    color: '#333',
-                    padding: '10px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                  }} 
-                  cursor={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 2 }} 
-                  isAnimationActive={false}
-                  labelStyle={{ color: '#666', marginBottom: '5px', fontSize: '12px' }}
-                  itemStyle={{ color: '#2563eb', fontWeight: 'bold' }}
-                  formatter={(value) => [`${value}%`, 'Probability']}
+                <Tooltip
+                  formatter={(value) => [`${value}%`, "Probability"]}
                 />
-                <Area type="monotone" dataKey="prob" stroke="#fff" strokeWidth={2} fill="url(#colorProbWhite)" activeDot={{ r: 4, fill: 'white' }} />
+                <Area
+                  type="monotone"
+                  dataKey="prob"
+                  stroke="#fff"
+                  strokeWidth={2}
+                  fill="url(#colorProbWhite)"
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
 
-      {/* Past 7 Days */}
+      {/* PAST 7 DAYS */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Past 7 Days Trend</CardTitle>
@@ -108,26 +160,41 @@ export default function Predictions() {
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 12 }} />
                 <YAxis hide />
-                <Tooltip cursor={{fill: 'transparent'}} />
-                <Bar dataKey="occupancy" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                <Tooltip cursor={{ fill: "transparent" }} />
+                <Bar
+                  dataKey="occupancy"
+                  fill="hsl(var(--primary))"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
 
-      {/* Per Zone Predictions */}
+      {/* ZONE-WISE PROBABILITY */}
       <div>
-        <h3 className="font-semibold mb-4 ml-1">Zone-wise Probability (Tomorrow)</h3>
+        <h3 className="font-semibold mb-4 ml-1">
+          Zone-wise Probability (Tomorrow)
+        </h3>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {zonePredictions.map((zone) => (
-            <div key={zone.id} className="bg-card border p-3 rounded-lg flex justify-between items-center">
+            <div
+              key={zone.id}
+              className="bg-card border p-3 rounded-lg flex justify-between items-center"
+            >
               <span className="font-medium text-sm">{zone.id}</span>
-              <div className={`text-sm font-bold px-2 py-0.5 rounded ${
-                zone.prob > 85 ? "bg-red-100 text-red-700" :
-                zone.prob > 60 ? "bg-yellow-100 text-yellow-700" :
-                "bg-green-100 text-green-700"
-              }`}>
+
+              <div
+                className={`text-sm font-bold px-2 py-0.5 rounded ${
+                  zone.prob > 85
+                    ? "bg-red-100 text-red-700"
+                    : zone.prob > 60
+                    ? "bg-yellow-100 text-yellow-700"
+                    : "bg-green-100 text-green-700"
+                }`}
+              >
                 {zone.prob}%
               </div>
             </div>
