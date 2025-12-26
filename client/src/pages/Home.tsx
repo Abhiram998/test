@@ -56,12 +56,12 @@ type Zone = {
 };
 
 type VehicleSearchResult = {
-  vehicle_number: string;
-  type_name: string;
-  zone_id: string;
-  zone_name: string;
-  ticket_code: string;
-  entry_time: string;
+  vehicle: string;
+  ticketId: string;
+  status: "INSIDE" | "EXITED";
+  zone: string;
+  entryTime?: string;
+  exitTime?: string;
 };
 
 
@@ -206,23 +206,23 @@ const barChartData = zones
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<any>(null);
+  const [searchResult, setSearchResult] = useState<VehicleSearchResult | null>(null);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
 
     try {
-      const result = await apiGet<VehicleSearchResult>(
-        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
-      );
+      const result = await apiGet<any>(
+  `/api/search?q=${encodeURIComponent(searchQuery)}`
+);
       setSearchResult(result);
     } catch {
       setSearchResult(null);
       toast({
         variant: "destructive",
         title: "Not Found",
-        description: "Vehicle not currently parked",
+        description: "Vehicle not found in live or history",
       });
     }
   };
@@ -442,12 +442,32 @@ const barChartData = zones
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
-                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
-                          <span className="font-bold">{searchResult.vehicle_number}</span>
-                          <span>in {searchResult.zone_name}</span>
-                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full" onClick={() => setSearchResult(null)}>×</Button>
-                        </div>
-                      )}
+  <div
+    className={`px-3 py-1.5 rounded-md text-xs border flex items-center gap-2
+      ${
+        searchResult.status === "INSIDE"
+          ? "bg-green-50 text-green-700 border-green-100"
+          : "bg-slate-50 text-slate-600 border-slate-200"
+      }`}
+  >
+    <span className="font-bold">{searchResult.vehicle}</span>
+    <span>
+      {searchResult.status === "INSIDE"
+        ? "inside"
+        : "exited from"}{" "}
+      {searchResult.zone}
+    </span>
+
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-4 w-4 ml-1 hover:bg-slate-200 rounded-full"
+      onClick={() => setSearchResult(null)}
+    >
+      ×
+    </Button>
+  </div>
+)}
                       <form onSubmit={handleSearch} className="flex gap-2">
                           <Input 
                               placeholder="Find Vehicle..." 
