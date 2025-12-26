@@ -170,7 +170,6 @@ export default function AreaDetails() {
             <div className="grid grid-cols-5 sm:grid-cols-8 gap-2">
               {Array.from({ length: zone.capacity }).map((_, i) => {
                 const isSlotOccupied = i < occupiedCount;
-                const vehicleInSlot = vehicles[i];
                 return (
                   <div
                     key={i}
@@ -181,10 +180,10 @@ export default function AreaDetails() {
                     }`}
                   >
                     {isSlotOccupied ? (
-                      vehicleInSlot ? getVehicleIcon(vehicleInSlot.type) : <Car className="w-3 h-3" />
-                    ) : (
-                      i + 1
-                    )}
+  <Car className="w-3 h-3" />
+) : (
+  i + 1
+)}
                   </div>
                 );
               })}
