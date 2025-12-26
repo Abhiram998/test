@@ -1,50 +1,37 @@
-// =======================================================
-// Central API configuration for Nilakkal Parking Frontend
-// =======================================================
-
-// 🔥 IMPORTANT:
-// - In production, this MUST point to Railway backend
-// - In local dev, it can fall back to localhost
-
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL?.replace(/\/$/, "") ||
   "https://test-production-8b24.up.railway.app";
 
-// -------------------------
-// Generic GET helper
-// -------------------------
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${res.status}: ${text}`);
-  }
-
-  return res.json() as Promise<T>;
+  const res = await fetch(`${API_BASE_URL}${path}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
-// -------------------------
-// Generic POST helper
-// -------------------------
+// For creating new zones
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${res.status}: ${text}`);
-  }
+// For updating zone limits (Edit)
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 
-  return res.json() as Promise<T>;
+export async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
