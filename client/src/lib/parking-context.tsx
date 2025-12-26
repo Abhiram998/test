@@ -1,6 +1,6 @@
 import { apiGet, apiPost } from "./api";
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { appendEvent, saveLatestSnapshot, loadLatestSnapshotPayload, rebuildStateFromEvents, VehicleRecord } from '@/utils/persistence';
+import { saveLatestSnapshot, VehicleRecord } from '@/utils/persistence';
 
 export type VehicleType = 'heavy' | 'medium' | 'light';
 
@@ -33,9 +33,7 @@ export type ParkingZone = {
 
 type ParkingContextType = {
   zones: ParkingZone[];
-  // FIX 1: Added refreshData to type for Report/Exit support
   refreshData: () => Promise<void>; 
-  // FIX 2: Corrected to Promise return for async entry
   enterVehicle: (vehicleNumber: string, type?: VehicleType, zoneId?: string, slot?: string) => Promise<{ success: boolean; ticket?: any; message?: string }>;
   totalCapacity: number;
   totalOccupied: number;
@@ -43,9 +41,9 @@ type ParkingContextType = {
   loginAdmin: (username?: string, password?: string) => boolean;
   registerAdmin: (username: string, password: string, name: string, policeId: string) => boolean;
   logoutAdmin: () => void;
-  addZone: (zone: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => void;
-  updateZone: (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => void;
-  deleteZone: (id: string) => void;
+  addZone: (zone: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => Promise<void>;
+  updateZone: (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => Promise<void>;
+  deleteZone: (id: string) => Promise<void>;
   restoreData: (records: any[]) => void;
 };
 
@@ -78,21 +76,14 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     zonesRef.current = zones;
   }, [zones]);
 
-  useEffect(() => {
-    console.log("🔄 ZONES UPDATED FROM BACKEND", zones);
-  }, [zones]);
-
-  // FIX 3: Centralized refresh logic
   const refreshData = async () => {
     try {
       const data = await apiGet<ParkingZone[]>("/api/zones");
-
       const normalized = data.map(z => ({
         ...z,
-        vehicles: [], // We use counts (z.stats) instead of the vehicle list for dashboard
-        stats: z.stats || { heavy: 0, medium: 0, light: 0 } // Ensure stats are always present
+        vehicles: [], 
+        stats: z.stats || { heavy: 0, medium: 0, light: 0 }
       }));
-
       setZones(normalized);
     } catch (err) {
       console.error("❌ Failed to load zones from backend", err);
@@ -108,22 +99,13 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     { username: "police@gmail.com", password: "575", name: "Sabarimala Traffic Control", policeId: "POL-KERALA-575" }
   ]);
 
-  // Persistence logic (Kept 100% original)
+  // Persistence logic
   useEffect(() => {
     const interval = setInterval(() => {
        const payload = makeSnapshotFromState(zonesRef.current);
        saveLatestSnapshot(payload).catch(e => console.error("Auto-save failed", e));
     }, 3 * 60 * 1000); 
     return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const handleUnload = () => {
-       const payload = makeSnapshotFromState(zonesRef.current);
-       saveLatestSnapshot(payload);
-    };
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
   }, []);
 
   const makeSnapshotFromState = (currentZones: ParkingZone[]) => {
@@ -152,58 +134,63 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
   };
 
   const registerAdmin = (username: string, password: string, name: string, policeId: string) => {
-    if (admins.some(a => a.username === username)) {
-      return false; 
-    }
+    if (admins.some(a => a.username === username)) return false; 
     setAdmins([...admins, { username, password, name, policeId }]);
     return true;
   };
   
   const logoutAdmin = () => setIsAdmin(false);
 
-  const addZone = (zoneData: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => {
-    const newId = `Z${zones.length + 1}`;
-    const newZone: ParkingZone = {
-      id: newId,
-      ...zoneData,
-      occupied: 0,
-      vehicles: [],
-      stats: { heavy: 0, medium: 0, light: 0 }
-    };
-    setZones([...zones, newZone]);
-  };
+  // --- RECTIFIED ADMIN ACTIONS WITH API SYNC ---
 
-  const updateZone = (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => {
-    setZones(zones.map(z => z.id === id ? { ...z, ...data } : z));
-  };
-
-  const deleteZone = (id: string) => {
-    setZones(zones.filter(z => z.id !== id));
-  };
-
-  const enterVehicle = async (
-    vehicleNumber: string,
-    type: VehicleType = "light",
-    zoneId?: string,
-    slot?: string
-  ) => {
+  const addZone = async (zoneData: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => {
     try {
-      const res = await apiPost<{
-        success: boolean;
-        ticket: string;
-      }>("/api/enter", {
+      // 1. Sync with backend
+      await apiPost("/api/zones", zoneData);
+      // 2. Refresh state from source of truth
+      await refreshData();
+      console.log("✅ New parking terminal registered on server");
+    } catch (err) {
+      console.error("❌ Failed to add zone", err);
+      throw err;
+    }
+  };
+
+  const updateZone = async (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => {
+    try {
+      await apiPost(`/api/zones/${id}`, data);
+      await refreshData();
+    } catch (err) {
+      console.error("❌ Failed to update zone", err);
+      throw err;
+    }
+  };
+
+  const deleteZone = async (id: string) => {
+    try {
+      // Note: If your backend uses DELETE method, this might need a specific apiDelete helper
+      await apiPost(`/api/zones/${id}/delete`, {});
+      await refreshData();
+    } catch (err) {
+      console.error("❌ Failed to delete zone", err);
+      throw err;
+    }
+  };
+
+  // --- END OF RECTIFIED ACTIONS ---
+
+  const enterVehicle = async (vehicleNumber: string, type: VehicleType = "light", zoneId?: string, slot?: string) => {
+    try {
+      const res = await apiPost<{ success: boolean; ticket: string; }>("/api/enter", {
         vehicle: vehicleNumber,
         type,
         zone: zoneId,
         slot,
       });
 
-      if (!res.success) {
-        return { success: false, message: "Entry failed" };
-      }
+      if (!res.success) return { success: false, message: "Entry failed" };
 
       await refreshData();
-
       return {
         success: true,
         ticket: {
@@ -233,45 +220,33 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
 
     records.forEach(rec => {
       if (rec.timeOut) return;
-      const zoneName = rec.zone;
-      let zone = newZones.find(z => z.name === zoneName) || newZones.find(z => z.id === rec.zone); 
-      
-      if (!zone && rec.zone) {
-          zone = newZones.find(z => z.name.includes(rec.zone) || rec.zone.includes(z.id));
-      }
+      let zone = newZones.find(z => z.name === rec.zone || z.id === rec.zone); 
       if (!zone) zone = newZones[0]; 
 
-      const rawType = rec.type;
-      const vehicleType: VehicleType = (rawType === 'heavy' || rawType === 'medium' || rawType === 'light') ? rawType : 'light';
+      const vehicleType: VehicleType = ['heavy', 'medium', 'light'].includes(rec.type) ? rec.type : 'light';
       
-      if (zone.occupied >= zone.capacity || zone.stats[vehicleType] >= zone.limits[vehicleType]) {
-        const backupZone = newZones.find(z => z.occupied < z.capacity && z.stats[vehicleType] < z.limits[vehicleType]);
-        if (backupZone) {
-          zone = backupZone;
-        } else {
-          return;
-        }
+      if (zone.occupied < zone.capacity && zone.stats[vehicleType] < zone.limits[vehicleType]) {
+        zone.vehicles.push({
+          number: rec.plate,
+          entryTime: new Date(rec.timeIn),
+          zoneId: zone.id,
+          ticketId: `RES-${Date.now()}`,
+          type: vehicleType
+        });
+        zone.occupied++;
+        zone.stats[vehicleType]++; 
       }
-
-      const vehicle: Vehicle = {
-        number: rec.plate,
-        entryTime: new Date(rec.timeIn),
-        zoneId: zone.id,
-        ticketId: `RES-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-        type: vehicleType,
-        slot: undefined
-      };
-
-      zone.vehicles.push(vehicle);
-      zone.occupied++;
-      zone.stats[vehicleType]++; 
     });
 
     setZones(newZones);
   };
 
   return (
-    <ParkingContext.Provider value={{ zones, refreshData, enterVehicle, totalCapacity, totalOccupied, isAdmin, loginAdmin, registerAdmin, logoutAdmin, addZone, updateZone, deleteZone, restoreData }}>
+    <ParkingContext.Provider value={{ 
+      zones, refreshData, enterVehicle, totalCapacity, totalOccupied, 
+      isAdmin, loginAdmin, registerAdmin, logoutAdmin, 
+      addZone, updateZone, deleteZone, restoreData 
+    }}>
       {children}
     </ParkingContext.Provider>
   );
