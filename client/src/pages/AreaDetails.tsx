@@ -24,7 +24,9 @@ export default function AreaDetails() {
   
   const percentage = Math.round((occupiedCount / zone.capacity) * 100);
   const isFull = percentage >= 100;
-  const displayZoneNumber = zone.id.replace("Z", "");
+  // 🔹 Display number based on dashboard order (not DB ID)
+const displayZoneNumber =
+  zones.findIndex(z => z.id === zone.id) + 1;
 
   useEffect(() => {
     if (!id) return;
