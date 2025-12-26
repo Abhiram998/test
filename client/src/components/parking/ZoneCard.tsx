@@ -3,13 +3,7 @@ import { motion } from "framer-motion";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import { MoreHorizontal, Car, Bus, Truck } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Car, Bus, Truck } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,16 +11,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 
-export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detailed?: boolean }) {
+export function ZoneCard({
+  zone,
+  displayIndex,
+  detailed = false,
+}: {
+  zone: ParkingZone;
+  displayIndex?: number;
+  detailed?: boolean;
+}) {
   const { isAdmin } = useParking();
   const percentage = Math.round((zone.occupied / zone.capacity) * 100);
   const isFull = percentage >= 100;
   const isNearFull = percentage > 85;
   const [showVehicles, setShowVehicles] = useState(false);
 
-  // ✅ FIX: Safely handle missing vehicles from backend
   const vehicles = zone.vehicles ?? [];
 
   const getVehicleIcon = (type: string) => {
@@ -47,7 +47,7 @@ export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detail
       className={cn(
         "group relative overflow-hidden rounded-lg border bg-card p-2 transition-all hover:shadow-md cursor-pointer",
         isFull
-          ? "border-red-200 bg-red-50/30 dark:bg-red-900/10"
+          ? "border-red-200 bg-red-50/30"
           : "border-border hover:border-primary/30"
       )}
     >
@@ -57,17 +57,17 @@ export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detail
             className={cn(
               "h-5 w-5 rounded-md flex items-center justify-center text-[10px] font-bold border",
               isFull
-                ? "bg-destructive text-destructive-foreground border-destructive/20"
+                ? "bg-red-500 text-white border-red-200"
                 : "bg-primary/10 text-primary border-primary/10"
             )}
           >
-            {zone.id}
+            {/* ✅ UI LABEL ONLY */}
+            {displayIndex ? `Z${displayIndex}` : zone.id}
           </div>
-          <div>
-            <h3 className="font-bold text-xs text-foreground leading-none whitespace-nowrap">
-              {zone.name.replace("Nilakkal Parking Zone ", "Parking Zone ")}
-            </h3>
-          </div>
+
+          <h3 className="font-bold text-xs text-foreground whitespace-nowrap">
+            {zone.name.replace("Nilakkal Parking Zone ", "Parking Zone ")}
+          </h3>
         </div>
 
         <span
@@ -86,16 +86,15 @@ export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detail
 
       <div className="space-y-1">
         <div className="flex justify-between text-[10px] items-end">
-          <span className="text-muted-foreground font-medium truncate">Occ</span>
+          <span className="text-muted-foreground font-medium">Occ</span>
           <div className="flex items-baseline gap-0.5">
-            <span className="font-bold tabular-nums text-foreground">
-              {zone.occupied}
-            </span>
+            <span className="font-bold">{zone.occupied}</span>
             <span className="text-[9px] text-muted-foreground">
               /{zone.capacity}
             </span>
           </div>
         </div>
+
         <Progress
           value={percentage}
           className={cn(
@@ -107,55 +106,49 @@ export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detail
         />
       </div>
 
-      {/* Vehicle List Dialog */}
+      {/* Vehicle dialog */}
       <Dialog open={showVehicles} onOpenChange={setShowVehicles}>
         <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Zone {zone.id} - Vehicles</DialogTitle>
+            <DialogTitle>
+              Zone {displayIndex ? `Z${displayIndex}` : zone.id} - Vehicles
+            </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 mt-4">
+          <div className="space-y-2 mt-4">
             {vehicles.length === 0 ? (
-              <div className="text-center py-4 text-muted-foreground">
+              <div className="text-center text-muted-foreground">
                 No vehicles parked
               </div>
             ) : (
-              <div className="space-y-2">
-                {vehicles.map((v, i) => (
-                  <div
-                    key={i}
-                    className="flex justify-between items-center p-3 rounded-lg border bg-card"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${
-                          v.type === "heavy"
-                            ? "bg-red-500"
-                            : v.type === "medium"
-                            ? "bg-amber-500"
-                            : "bg-primary"
-                        }`}
-                      >
-                        {getVehicleIcon(v.type)}
-                      </div>
-                      <div>
-                        <div className="font-mono font-bold text-sm">
-                          {v.number}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {v.ticketId}
-                        </div>
-                      </div>
+              vehicles.map((v, i) => (
+                <div
+                  key={i}
+                  className="flex justify-between items-center p-3 rounded-lg border"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${
+                        v.type === "heavy"
+                          ? "bg-red-500"
+                          : v.type === "medium"
+                          ? "bg-amber-500"
+                          : "bg-primary"
+                      }`}
+                    >
+                      {getVehicleIcon(v.type)}
                     </div>
-                    <div className="text-xs font-mono text-muted-foreground">
-                      {v.entryTime?.toLocaleTimeString?.([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <div>
+                      <div className="font-mono font-bold text-sm">
+                        {v.number}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {v.ticketId}
+                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))
             )}
           </div>
         </DialogContent>
@@ -163,8 +156,8 @@ export function ZoneCard({ zone, detailed = false }: { zone: ParkingZone; detail
     </motion.div>
   );
 
-  // Only link if not in detailed admin view
   if (detailed) return CardContent;
 
+  // ✅ ALWAYS USE BACKEND ID FOR ROUTING
   return <Link href={`/zone/${zone.id}`}>{CardContent}</Link>;
 }

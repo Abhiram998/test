@@ -484,17 +484,14 @@ const barChartData = zones
              </div>
              
              <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
-                {zones.map((zone, index) => (
-  <ZoneCard
-    key={zone.id}
-    zone={{
-      ...zone,
-      id: `Z${index + 1}` // ✅ UI label override
-    }}
-  />
-))}
-
-             </div>
+  {zones.map((zone, index) => (
+    <ZoneCard
+      key={zone.id}
+      zone={zone}              // ✅ backend ID untouched
+      displayIndex={index + 1} // ✅ UI-only numbering
+    />
+  ))}
+</div>
           </div>
 
         </div>
