@@ -15,16 +15,23 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    
-    if (loginAdmin(email, password)) {
+  const handleLogin = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError("");
+
+  try {
+  const success = await loginAdmin(email.trim(), password);
+
+    if (success) {
       setLocation("/admin");
     } else {
       setError("Invalid ID or Password. Access Denied.");
     }
-  };
+  } catch (err: any) {
+    setError(err.message || "Authentication failed");
+  }
+};
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 dark">
