@@ -284,6 +284,125 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
         "message": "Vehicle is inside" if row["current_status"] == 'INSIDE' else f"Vehicle exited at {row['exit_time']}"
     }
 
+# ================== ADMIN: UPDATE ZONE ==================
+@app.put("/api/admin/zones/{zone_id}")
+def update_zone(
+    zone_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        name = payload.get("name")
+        limits = payload.get("limits")
+
+        if not name or not limits:
+            raise HTTPException(400, "Zone name and limits required")
+
+        # Fetch zone
+        zone = db.execute(text("""
+            SELECT * FROM parking_zones WHERE zone_id = :z AND status='ACTIVE'
+        """), {"z": zone_id}).mappings().first()
+
+        if not zone:
+            raise HTTPException(404, "Zone not found")
+
+        # Fetch current counts
+        rows = db.execute(text("""
+            SELECT vt.type_name, zl.current_count
+            FROM zone_type_limits zl
+            JOIN vehicle_types vt ON zl.vehicle_type_id = vt.id
+            WHERE zl.zone_id = :z
+        """), {"z": zone_id}).fetchall()
+
+        current_counts = {r.type_name.lower(): r.current_count for r in rows}
+
+        heavy = int(limits.get("heavy", 0))
+        medium = int(limits.get("medium", 0))
+        light = int(limits.get("light", 0))
+
+        # ❌ Prevent reducing below active vehicles
+        if heavy < current_counts["heavy"] \
+           or medium < current_counts["medium"] \
+           or light < current_counts["light"]:
+            raise HTTPException(
+                400,
+                "Cannot reduce capacity below current parked vehicles"
+            )
+
+        total_capacity = heavy + medium + light
+
+        # Update zone
+        db.execute(text("""
+            UPDATE parking_zones
+            SET zone_name = :name,
+                total_capacity = :cap
+            WHERE zone_id = :z
+        """), {
+            "name": name,
+            "cap": total_capacity,
+            "z": zone_id
+        })
+
+        # Update limits
+        for t_name, max_v in [("Heavy", heavy), ("Medium", medium), ("Light", light)]:
+            db.execute(text("""
+                UPDATE zone_type_limits
+                SET max_vehicles = :m
+                WHERE zone_id = :z
+                  AND vehicle_type_id = (
+                      SELECT id FROM vehicle_types WHERE type_name = :t
+                  )
+            """), {
+                "m": max_v,
+                "z": zone_id,
+                "t": t_name
+            })
+
+        db.commit()
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
+
+
+# ================== ADMIN: DELETE ZONE ==================
+@app.delete("/api/admin/zones/{zone_id}")
+def delete_zone(zone_id: str, db: Session = Depends(get_db)):
+    try:
+        zone = db.execute(text("""
+            SELECT current_occupied FROM parking_zones
+            WHERE zone_id = :z AND status='ACTIVE'
+        """), {"z": zone_id}).scalar()
+
+        if zone is None:
+            raise HTTPException(404, "Zone not found")
+
+        if zone > 0:
+            raise HTTPException(
+                400,
+                "Cannot delete zone while vehicles are parked"
+            )
+
+        # Soft delete
+        db.execute(text("""
+            UPDATE parking_zones
+            SET status = 'INACTIVE'
+            WHERE zone_id = :z
+        """), {"z": zone_id})
+
+        db.commit()
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
+
+
 # ================== ENTER VEHICLE ==================
 @app.post("/api/enter")
 def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
