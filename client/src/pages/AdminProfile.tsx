@@ -13,7 +13,7 @@ import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function AdminProfile() {
-  const { logoutAdmin, isAdmin, registerAdmin } = useParking();
+  const { logoutAdmin, isAdmin } = useParking();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 

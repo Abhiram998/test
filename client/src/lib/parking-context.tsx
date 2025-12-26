@@ -33,29 +33,50 @@ export type ParkingZone = {
 
 type ParkingContextType = {
   zones: ParkingZone[];
-  refreshData: () => Promise<void>; 
-  enterVehicle: (vehicleNumber: string, type?: VehicleType, zoneId?: string, slot?: string) => Promise<{ success: boolean; ticket?: any; message?: string }>;
+  refreshData: () => Promise<void>;
+
+  enterVehicle: (
+    vehicleNumber: string,
+    type?: VehicleType,
+    zoneId?: string,
+    slot?: string
+  ) => Promise<{ success: boolean; ticket?: any; message?: string }>;
+
   totalCapacity: number;
   totalOccupied: number;
+
   isAdmin: boolean;
-  loginAdmin: (username?: string, password?: string) => boolean;
-  registerAdmin: (username: string, password: string, name: string, policeId: string) => boolean;
-  logoutAdmin: () => void;
-  addZone: (zone: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => Promise<void>;
-  updateZone: (
-  id: string,
-  data: {
+  adminUser: {
+    id: number;
     name: string;
-    limits: {
-      heavy: number;
-      medium: number;
-      light: number;
-    };
-  }
-) => Promise<void>;
+    policeId: string;
+    email: string;
+    role: string;
+  } | null;
+
+  loginAdmin: (email: string, password: string) => Promise<boolean>;
+  logoutAdmin: () => void;
+
+  addZone: (
+    zone: Omit<ParkingZone, "id" | "occupied" | "vehicles" | "stats">
+  ) => Promise<void>;
+
+  updateZone: (
+    id: string,
+    data: {
+      name: string;
+      limits: {
+        heavy: number;
+        medium: number;
+        light: number;
+      };
+    }
+  ) => Promise<void>;
+
   deleteZone: (id: string) => Promise<void>;
   restoreData: (records: any[]) => void;
 };
+
 
 const ParkingContext = createContext<ParkingContextType | undefined>(undefined);
 
@@ -105,9 +126,14 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const [isAdmin, setIsAdmin] = useState(false);
-  const [admins, setAdmins] = useState([
-    { username: "police@gmail.com", password: "575", name: "Sabarimala Traffic Control", policeId: "POL-KERALA-575" }
-  ]);
+  const [adminUser, setAdminUser] = useState<{
+  id: number;
+  name: string;
+  policeId: string;
+  email: string;
+  role: string;
+} | null>(null);
+
 
   // Persistence logic
   useEffect(() => {
@@ -134,22 +160,46 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  const loginAdmin = (username?: string, password?: string) => {
-    const admin = admins.find(a => a.username === username && a.password === password);
-    if (admin) {
-      setIsAdmin(true);
-      return true;
-    }
-    return false;
+  type AdminLoginResponse = {
+  success: boolean;
+  user: {
+    id: number;
+    name: string;
+    policeId: string;
+    email: string;
+    role: string;
   };
+};
 
-  const registerAdmin = (username: string, password: string, name: string, policeId: string) => {
-    if (admins.some(a => a.username === username)) return false; 
-    setAdmins([...admins, { username, password, name, policeId }]);
+const loginAdmin = async (
+  email: string,
+  password: string
+): Promise<boolean> => {
+  try {
+    const res = await apiPost<AdminLoginResponse>("/api/admin/login", {
+      email,
+      password,
+    });
+
+    if (!res.success) return false;
+
+    setAdminUser(res.user);
+    setIsAdmin(true);
     return true;
-  };
+  } catch (err) {
+    console.error("❌ Admin login failed", err);
+    return false;
+  }
+};
+
+
+
   
-  const logoutAdmin = () => setIsAdmin(false);
+  const logoutAdmin = () => {
+  setIsAdmin(false);
+  setAdminUser(null);
+};
+
 
   // --- RECTIFIED ADMIN ACTIONS WITH API SYNC ---
 
@@ -267,10 +317,20 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ParkingContext.Provider value={{ 
-      zones, refreshData, enterVehicle, totalCapacity, totalOccupied, 
-      isAdmin, loginAdmin, registerAdmin, logoutAdmin, 
-      addZone, updateZone, deleteZone, restoreData 
-    }}>
+  zones,
+  refreshData,
+  enterVehicle,
+  totalCapacity,
+  totalOccupied,
+  isAdmin,
+  adminUser,        // ✅ now available everywhere
+  loginAdmin,
+  logoutAdmin,
+  addZone,
+  updateZone,
+  deleteZone,
+  restoreData
+}}>
       {children}
     </ParkingContext.Provider>
   );
