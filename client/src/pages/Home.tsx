@@ -337,9 +337,6 @@ export default function Home() {
                     <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
                       <Ticket className="w-4 h-4" /> Generate Ticket
                     </Button>
-                    <Button size="sm" onClick={openAddZone} className="bg-green-600 hover:bg-green-700 text-white gap-2">
-                      <Plus className="w-4 h-4" /> Add Zone
-                    </Button>
                   </div>
                 )}
               </div>
