@@ -1,5 +1,6 @@
 import { ArrowLeft, Calendar, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -13,55 +14,56 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { useEffect, useState } from "react";
 
-/* ===========================
+/* =========================
+   TYPES
+========================= */
+
+type PastDay = {
+  day: string;
+  occupancy: number;
+};
+
+type ZonePrediction = {
+  zone: string;
+  probability: number;
+};
+
+/* =========================
    COMPONENT
-=========================== */
+========================= */
 
 export default function Predictions() {
-  /* ---------------------------
-     STATE
-  --------------------------- */
-  const [weeklyData, setWeeklyData] = useState<
-    { day: string; occupancy: number }[]
-  >([]);
+  const [weeklyData, setWeeklyData] = useState<PastDay[]>([]);
+  const [tomorrowProbability, setTomorrowProbability] = useState<number>(0);
+  const [zonePredictions, setZonePredictions] = useState<ZonePrediction[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [tomorrowProbability, setTomorrowProbability] = useState(0);
+  /* =========================
+     FETCH DATA
+  ========================= */
 
-  const [zonePredictions, setZonePredictions] = useState<
-    { id: string; prob: number }[]
-  >([]);
-
-  /* ---------------------------
-     API FETCH
-  --------------------------- */
   useEffect(() => {
     fetch("/api/predictions")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load predictions");
+        return res.json();
+      })
       .then((data) => {
-        // Past 7 days trend
         setWeeklyData(data.past7Days || []);
-
-        // Tomorrow probability
         setTomorrowProbability(data.tomorrow?.probability || 0);
-
-        // Zone-wise probabilities
-        setZonePredictions(
-          (data.zones || []).map((z: any) => ({
-            id: z.zone,
-            prob: z.probability,
-          }))
-        );
+        setZonePredictions(data.zones || []);
       })
       .catch((err) => {
-        console.error("Prediction API error:", err);
-      });
+        console.error("Prediction fetch error:", err);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  /* ===========================
-     RENDER
-  =========================== */
+  /* =========================
+     UI
+  ========================= */
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* HEADER */}
@@ -109,38 +111,29 @@ export default function Predictions() {
             </div>
           </div>
 
-          {/* AREA CHART (kept for future extension) */}
-          <div className="h-[150px] mt-6">
+          {/* Decorative Area Chart */}
+          <div className="h-[120px] mt-6">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={[
-                  { time: "Morning", prob: tomorrowProbability },
-                  { time: "Afternoon", prob: tomorrowProbability },
-                  { time: "Evening", prob: tomorrowProbability },
+                  { x: "now", y: 0 },
+                  { x: "tomorrow", y: tomorrowProbability },
                 ]}
               >
                 <defs>
-                  <linearGradient
-                    id="colorProbWhite"
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <stop offset="5%" stopColor="#fff" stopOpacity={0.3} />
+                  <linearGradient id="probFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#fff" stopOpacity={0.35} />
                     <stop offset="95%" stopColor="#fff" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="time" hide />
-                <Tooltip
-                  formatter={(value) => [`${value}%`, "Probability"]}
-                />
+                <XAxis dataKey="x" hide />
+                <YAxis hide />
                 <Area
                   type="monotone"
-                  dataKey="prob"
+                  dataKey="y"
                   stroke="#fff"
                   strokeWidth={2}
-                  fill="url(#colorProbWhite)"
+                  fill="url(#probFill)"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -158,9 +151,9 @@ export default function Predictions() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={weeklyData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="day" />
                 <YAxis hide />
-                <Tooltip cursor={{ fill: "transparent" }} />
+                <Tooltip />
                 <Bar
                   dataKey="occupancy"
                   fill="hsl(var(--primary))"
@@ -172,7 +165,7 @@ export default function Predictions() {
         </CardContent>
       </Card>
 
-      {/* ZONE-WISE PROBABILITY */}
+      {/* ZONE WISE */}
       <div>
         <h3 className="font-semibold mb-4 ml-1">
           Zone-wise Probability (Tomorrow)
@@ -181,26 +174,32 @@ export default function Predictions() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {zonePredictions.map((zone) => (
             <div
-              key={zone.id}
+              key={zone.zone}
               className="bg-card border p-3 rounded-lg flex justify-between items-center"
             >
-              <span className="font-medium text-sm">{zone.id}</span>
+              <span className="font-medium text-sm">{zone.zone}</span>
 
               <div
                 className={`text-sm font-bold px-2 py-0.5 rounded ${
-                  zone.prob > 85
+                  zone.probability > 85
                     ? "bg-red-100 text-red-700"
-                    : zone.prob > 60
+                    : zone.probability > 60
                     ? "bg-yellow-100 text-yellow-700"
                     : "bg-green-100 text-green-700"
                 }`}
               >
-                {zone.prob}%
+                {zone.probability}%
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {loading && (
+        <p className="text-center text-muted-foreground">
+          Loading predictions…
+        </p>
+      )}
     </div>
   );
 }
