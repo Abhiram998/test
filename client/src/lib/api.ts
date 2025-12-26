@@ -20,9 +20,9 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 // For updating zone limits (Edit)
-export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
-    method: "PATCH",
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

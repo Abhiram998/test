@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "./api";
+import { apiGet, apiPost, apiPut, apiDelete } from "./api";
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { saveLatestSnapshot, VehicleRecord } from '@/utils/persistence';
 
@@ -42,7 +42,17 @@ type ParkingContextType = {
   registerAdmin: (username: string, password: string, name: string, policeId: string) => boolean;
   logoutAdmin: () => void;
   addZone: (zone: Omit<ParkingZone, 'id' | 'occupied' | 'vehicles' | 'stats'>) => Promise<void>;
-  updateZone: (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => Promise<void>;
+  updateZone: (
+  id: string,
+  data: {
+    name: string;
+    limits: {
+      heavy: number;
+      medium: number;
+      light: number;
+    };
+  }
+) => Promise<void>;
   deleteZone: (id: string) => Promise<void>;
   restoreData: (records: any[]) => void;
 };
@@ -156,26 +166,40 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateZone = async (id: string, data: Partial<Pick<ParkingZone, 'name' | 'capacity' | 'limits'>>) => {
-    try {
-      await apiPost(`/api/zones/${id}`, data);
-      await refreshData();
-    } catch (err) {
-      console.error("❌ Failed to update zone", err);
-      throw err;
-    }
-  };
+  const updateZone = async (
+  id: string,
+  data: {
+    name: string;
+    limits: {
+      heavy: number;
+      medium: number;
+      light: number;
+    };
+  }
+) => {
+  try {
+    await apiPut(`/api/zones/${id}`, {
+      name: data.name,
+      limits: data.limits
+    });
+    await refreshData();
+  } catch (err) {
+    console.error("❌ Failed to update zone", err);
+    throw err;
+  }
+};
+
 
   const deleteZone = async (id: string) => {
-    try {
-      // Note: If your backend uses DELETE method, this might need a specific apiDelete helper
-      await apiPost(`/api/zones/${id}/delete`, {});
-      await refreshData();
-    } catch (err) {
-      console.error("❌ Failed to delete zone", err);
-      throw err;
-    }
-  };
+  try {
+    await apiDelete(`/api/zones/${id}`);   // ✅ DELETE
+    await refreshData();
+  } catch (err) {
+    console.error("❌ Failed to delete zone", err);
+    throw err;
+  }
+};
+
 
   // --- END OF RECTIFIED ACTIONS ---
 
