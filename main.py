@@ -80,6 +80,7 @@ def trigger_auto_snapshot(db: Session):
 def startup_db_check():
     """Ensure essential tables exist and schema is current on boot."""
     with next(get_db()) as db:
+        # Create Snapshots table
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id SERIAL PRIMARY KEY,
@@ -88,18 +89,24 @@ def startup_db_check():
                 data TEXT NOT NULL
             )
         """))
+        # Ensure vehicle types exist for zone creation logic
+        db.execute(text("""
+            INSERT INTO vehicle_types (type_name)
+            SELECT unnest(ARRAY['Heavy', 'Medium', 'Light'])
+            WHERE NOT EXISTS (SELECT 1 FROM vehicle_types LIMIT 1)
+        """))
         db.commit()
 
 # ================== ROOT & HEALTH ==================
 @app.get("/api")
 def root():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "Nilakkal Parking Admin API"}
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "db_configured": DATABASE_URL is not None}
 
-# ================== LIVE DASHBOARD ==================
+# ================== LIVE DASHBOARD (ZONES) ==================
 @app.get("/api/zones")
 def get_zones(db: Session = Depends(get_db)):
     rows = db.execute(text("""
@@ -135,21 +142,30 @@ def get_zones(db: Session = Depends(get_db)):
 
     return list(zones.values())
 
-# ================== ADMIN: CREATE ZONE ==================
+# 🟢 FIX: WRAPPER ROUTE FOR ADD PARKING BUTTON
+@app.post("/api/zones")
+def create_zone_public(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Direct bridge for frontend 'Add Parking' button which calls /api/zones.
+    Routes the request to the main creation logic.
+    """
+    return create_zone(payload, db)
+
+# ================== ADMIN: CREATE ZONE LOGIC ==================
 @app.post("/api/admin/zones")
 def create_zone(payload: dict = Body(...), db: Session = Depends(get_db)):
     """
     Creates a new parking zone and its associated vehicle type limits atomically.
-    Calculates total capacity automatically.
+    Calculates total capacity automatically from the provided limits.
     """
     try:
         name = payload.get("name")
-        limits = payload.get("limits")  # { heavy: int, medium: int, light: int }
+        limits = payload.get("limits")  # Expects: { heavy: int, medium: int, light: int }
 
         if not name or not limits:
             raise HTTPException(400, "Zone name and vehicle limits are required")
 
-        # Parse and validate numbers
+        # Parse and validate numbers safely
         heavy = max(0, int(limits.get("heavy", 0)))
         medium = max(0, int(limits.get("medium", 0)))
         light = max(0, int(limits.get("light", 0)))
@@ -175,10 +191,13 @@ def create_zone(payload: dict = Body(...), db: Session = Depends(get_db)):
             "cap": total
         })
 
-        # 3. Get vehicle type IDs and insert limits
-        type_ids = dict(db.execute(
-            text("SELECT type_name, id FROM vehicle_types")
-        ).fetchall())
+        # 3. Get vehicle type IDs from DB and insert limits
+        type_ids_rows = db.execute(text("SELECT type_name, id FROM vehicle_types")).fetchall()
+        type_ids = {r.type_name: r.id for r in type_ids_rows}
+
+        # Validate that vehicle_types table is populated
+        if not type_ids:
+            raise Exception("Critical: vehicle_types table is empty. Cannot map limits.")
 
         for t_name, max_v in [("Heavy", heavy), ("Medium", medium), ("Light", light)]:
             if t_name in type_ids:
@@ -192,10 +211,12 @@ def create_zone(payload: dict = Body(...), db: Session = Depends(get_db)):
                 })
 
         db.commit()
-        return {"success": True, "zoneId": zone_id, "totalCapacity": total}
+        print(f"✅ Created Zone {zone_id} with capacity {total}")
+        return {"success": True, "zoneId": zone_id, "totalCapacity": total, "name": name}
 
     except Exception as e:
         db.rollback()
+        print(f"❌ Zone Creation Failed: {str(e)}")
         raise HTTPException(500, f"Failed to create zone: {str(e)}")
 
 # ================== LIVE VEHICLES ==================
