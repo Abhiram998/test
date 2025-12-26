@@ -1,14 +1,14 @@
 import { VehicleType } from "@/lib/parking-context";
 import { ZoneCard } from "@/components/parking/ZoneCard";
-import { MapPin, Search, MoreHorizontal, Activity, Ticket, Plus, Pencil, Trash2, Save, X } from "lucide-react";
+import { MapPin, Search, MoreHorizontal, Activity, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { useEffect } from "react";
-import { useParking } from "@/lib/parking-context";
+import { useParking } from "@/lib/parking-context"; // 🔹 Added this import
 
 import {
   Dialog,
@@ -31,10 +31,6 @@ import {
 } from 'recharts';
 
 import logo from "@/assets/kerala-police-logo.jpg";
-
-// ==========================================
-// TYPES & INTERFACES
-// ==========================================
 
 type Zone = {
   id: string;
@@ -68,19 +64,27 @@ type VehicleSearchResult = {
   entry_time: string;
 };
 
-// ==========================================
-// MAIN COMPONENT: HOME
-// ==========================================
 
 export default function Home() {
+  // 🔐 FIXED: Now using the real global state instead of hardcoded true
   const { isAdmin } = useParking();
+
+  // 🔹 Zones from backend API
+  const [zones, setZones] = useState<Zone[]>([]);
+
+  // 🔹 Derived totals
+  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
+  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
+
   const { toast } = useToast();
   
-  // 🔹 Zones State
-  const [zones, setZones] = useState<Zone[]>([]);
+  // Calculate vacancy
+  const totalVacancy = totalCapacity - totalOccupied;
+  
+  // State for interactive graph
   const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
 
-  // 🔹 Ticket Generation State
+  // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
   const [ticketData, setTicketData] = useState({
     vehicleNumber: "",
@@ -89,45 +93,26 @@ export default function Home() {
     type: "light" as VehicleType
   });
 
-  // 🔹 Zone Management State (Add/Edit)
-  const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
-  const [editingZone, setEditingZone] = useState<Zone | null>(null);
-  const [zoneForm, setZoneForm] = useState({
-    name: "",
-    heavy: 10,
-    medium: 15,
-    light: 25
-  });
-
-  // 🔹 Search State
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<any>(null);
-
-  // 🔹 Derived Calculations
-  const totalCapacity = zones.reduce((sum, z) => sum + z.capacity, 0);
-  const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
-  const totalVacancy = totalCapacity - totalOccupied;
-  const currentFormTotal = zoneForm.heavy + zoneForm.medium + zoneForm.light;
-
-  // ------------------------------------------
-  // DATA FETCHING
-  // ------------------------------------------
-  
-  const fetchZones = async () => {
-    try {
-      const data = await apiGet<Zone[]>("/api/zones");
-      setZones(data);
-    } catch (err) {
-      console.error("Failed to load zones", err);
-    }
-  };
-
   useEffect(() => {
     let isMounted = true;
+
+    const fetchZones = () => {
+      apiGet<Zone[]>("/api/zones")
+        .then((data) => {
+          if (isMounted) setZones(data);
+        })
+        .catch((err) => {
+          console.error("Failed to load zones", err);
+          toast({
+            variant: "destructive",
+            title: "API Error",
+            description: "Unable to load parking zones from server",
+          });
+        });
+    };
+
     fetchZones();
-    const interval = setInterval(() => {
-      if (isMounted) fetchZones();
-    }, 5000);
+    const interval = setInterval(fetchZones, 5000);
 
     return () => {
       isMounted = false;
@@ -135,89 +120,68 @@ export default function Home() {
     };
   }, []);
 
-  // ------------------------------------------
-  // ACTION HANDLERS
-  // ------------------------------------------
 
   const handleGenerateTicket = async () => {
     if (!ticketData.vehicleNumber) {
-      toast({ variant: "destructive", title: "Error", description: "Please enter a vehicle number" });
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Please enter a vehicle number",
+      });
       return;
     }
 
     try {
-      await apiPost("/api/enter", {
-        vehicle: ticketData.vehicleNumber,
-        type: ticketData.type,
-        zone: ticketData.zoneId || undefined,
-        slot: ticketData.slot || undefined,
+       await apiPost("/api/enter", {
+       vehicle: ticketData.vehicleNumber,
+       type: ticketData.type,
+       zone: ticketData.zoneId || undefined,
+       slot: ticketData.slot || undefined,
       });
 
-      toast({ title: "Ticket Generated", description: `Vehicle ${ticketData.vehicleNumber} parked successfully` });
+      toast({
+        title: "Ticket Generated",
+        description: `Vehicle ${ticketData.vehicleNumber} parked successfully`,
+      });
+
       setIsTicketOpen(false);
       setTicketData({ vehicleNumber: "", zoneId: "", slot: "", type: "light" });
-      fetchZones();
+      apiGet<Zone[]>("/api/zones").then(setZones);
+
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Generation Failed", description: err?.message || "Could not generate ticket" });
+      toast({
+        variant: "destructive",
+        title: "Generation Failed",
+        description: err?.message || "Could not generate ticket",
+      });
     }
   };
 
-  const handleSaveZone = async () => {
-    if (!zoneForm.name.trim()) {
-      toast({ variant: "destructive", title: "Missing Name", description: "Zone name is required" });
-      return;
-    }
 
-    try {
-      if (editingZone) {
-        await apiPatch(`/api/zones/${editingZone.id}`, zoneForm);
-        toast({ title: "Zone Updated", description: "Zone limits updated successfully" });
-      } else {
-        await apiPost("/api/zones", zoneForm);
-        toast({ title: "Zone Created", description: "New parking zone added" });
-      }
-      setIsZoneModalOpen(false);
-      setEditingZone(null);
-      fetchZones();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Action Failed", description: err?.message || "Failed to save zone" });
-    }
-  };
-
-  const openAddZone = () => {
-    setEditingZone(null);
-    setZoneForm({ name: "", heavy: 10, medium: 15, light: 25 });
-    setIsZoneModalOpen(true);
-  };
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-
-    try {
-      const result = await apiGet<VehicleSearchResult>(
-        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
-      );
-      setSearchResult(result);
-    } catch {
-      setSearchResult(null);
-      toast({ variant: "destructive", title: "Not Found", description: "Vehicle not currently parked" });
-    }
-  };
-
-  // ------------------------------------------
-  // CHART CONFIGURATION
-  // ------------------------------------------
-
+  // Chart Data Preparation
   const barChartData = zones.map(zone => {
-    const limits = zone.limits || { heavy: 0, medium: 0, light: 0 };
-    const stats = zone.stats || { heavy: 0, medium: 0, light: 0 };
-    
+    let heavyPct = 0;
+    let mediumPct = 0;
+    let lightPct = 0;
+
+    if (zone.limits) {
+       heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
+       mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
+       lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
+    } else {
+       heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
+       mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
+       lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
+    }
+
     return {
       name: zone.name.replace('Nilakkal Parking Zone ', 'P'),
-      Heavy: limits.heavy > 0 ? (stats.heavy / limits.heavy) * 100 : 0,
-      Medium: limits.medium > 0 ? (stats.medium / limits.medium) * 100 : 0,
-      Light: limits.light > 0 ? (stats.light / limits.light) * 100 : 0,
+      Heavy: heavyPct,
+      Medium: mediumPct,
+      Light: lightPct,
+      occupied: zone.occupied,
+      capacity: zone.capacity,
+      limits: zone.limits, 
       originalZone: zone 
     };
   });
@@ -238,11 +202,31 @@ export default function Home() {
     { name: 'Light', value: activeStats.light, color: '#3b82f6' },
   ];
 
-  // ------------------------------------------
-  // SUB-COMPONENTS
-  // ------------------------------------------
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<any>(null);
 
-  const TopCard = ({ title, value, dark = false, isVacancy = false }: any) => (
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    try {
+      const result = await apiGet<VehicleSearchResult>(
+        `/api/search/vehicle?number=${encodeURIComponent(searchQuery)}`
+      );
+      setSearchResult(result);
+    } catch {
+      setSearchResult(null);
+      toast({
+        variant: "destructive",
+        title: "Not Found",
+        description: "Vehicle not currently parked",
+      });
+    }
+  };
+
+
+  const TopCard = ({ title, value, subValue, dark = false, isVacancy = false }: any) => (
     <div className={`rounded-xl p-3 shadow-sm border relative overflow-hidden group hover:shadow-md transition-all ${dark ? 'bg-[#1a233a] text-white border-none' : 'bg-white border-slate-100 text-slate-800'}`}>
       <div className="flex justify-between items-center mb-0">
         <span className={`text-[10px] font-bold uppercase tracking-wider ${dark ? 'text-slate-300' : 'text-slate-500'}`}>{title}</span>
@@ -250,16 +234,13 @@ export default function Home() {
           {value}
         </div>
       </div>
+      {subValue && <div className={`text-[10px] ${dark ? 'text-slate-400' : 'text-slate-400'}`}>{subValue}</div>}
     </div>
   );
 
-  // ------------------------------------------
-  // RENDER
-  // ------------------------------------------
-
   return (
     <div className="space-y-4">
-      {/* Header Section */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-1">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
@@ -272,7 +253,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Top Status Indicators */}
+      {/* Top Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <TopCard title="Vacancy" value={totalVacancy} dark={true} isVacancy={true} />
         <TopCard title="Occupancy" value={totalOccupied} />
@@ -324,29 +305,36 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Chart and Controls */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 gap-6 h-full mt-2">
         <div className="space-y-6">
+          
+          {/* Bar Chart Section */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-4">
                 <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
                 
+                {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
                 {isAdmin && (
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
-                      <Ticket className="w-4 h-4" /> Generate Ticket
-                    </Button>
-                  </div>
+                  <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+                    <Ticket className="w-4 h-4" /> Generate Ticket
+                  </Button>
                 )}
               </div>
               <div className="hidden md:flex items-center gap-6">
-                 {['Heavy', 'Medium', 'Light'].map((type, i) => (
-                   <div key={type} className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-sm ${i === 0 ? 'bg-[#1e293b]' : i === 1 ? 'bg-[#f59e0b]' : 'bg-[#3b82f6]'}`}></div>
-                      <span className="text-xs text-slate-500">{type}</span>
-                   </div>
-                 ))}
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Heavy</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#f59e0b] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Medium</span>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-[#3b82f6] rounded-sm"></div>
+                    <span className="text-xs text-slate-500">Light</span>
+                 </div>
               </div>
             </div>
             
@@ -357,32 +345,68 @@ export default function Home() {
                   barSize={24} 
                   margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
                   onMouseMove={(state: any) => {
-                    if (state.activePayload) setHoveredZone(state.activePayload[0].payload.originalZone);
+                    if (state.activePayload) {
+                      setHoveredZone(state.activePayload[0].payload.originalZone);
+                    }
                   }}
-                  onMouseLeave={() => setHoveredZone(null)}
+                  onMouseLeave={() => {
+                    setHoveredZone(null);
+                  }}
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                   <XAxis 
                     dataKey="name" 
-                    axisLine={false} tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} dy={10} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
+                    dy={10} 
+                    interval={0} 
                   />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} unit="%" domain={[0, 100]} />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#64748b', fontSize: 12}} 
+                    unit="%"
+                    domain={[0, 100]} 
+                    allowDataOverflow={true}
+                  />
                   <Tooltip 
                     cursor={{ fill: '#f8fafc' }}
                     content={({ active, payload, label }) => {
                       if (active && payload && payload.length) {
-                        const d = payload[0].payload.originalZone;
+                        const data = payload[0].payload;
+                        const originalZone = data.originalZone;
                         return (
                           <div className="bg-white p-3 border border-slate-100 shadow-xl rounded-lg text-sm">
                             <p className="font-bold text-slate-800 mb-2">{label}</p>
                             <div className="space-y-1">
-                              {['heavy', 'medium', 'light'].map((t: any) => (
-                                <div key={t} className="flex items-center justify-between gap-4 text-xs">
-                                  <span className="capitalize">{t}</span>
-                                  <span className="font-mono">{d.stats[t]} / {d.limits[t]}</span>
-                                </div>
-                              ))}
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#1e293b]"></div>
+                                  Heavy
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.heavy} / {originalZone.limits?.heavy || '-'} ({data.Heavy.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#f59e0b]"></div>
+                                  Medium
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.medium} / {originalZone.limits?.medium || '-'} ({data.Medium.toFixed(1)}%)
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-500">
+                                  <div className="w-2 h-2 rounded-full bg-[#3b82f6]"></div>
+                                  Light
+                                </span>
+                                <span className="font-mono font-medium">
+                                  {originalZone.stats.light} / {originalZone.limits?.light || '-'} ({data.Light.toFixed(1)}%)
+                                </span>
+                              </div>
                             </div>
                           </div>
                         );
@@ -390,21 +414,21 @@ export default function Home() {
                       return null;
                     }}
                   />
-                  <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(v: number) => v > 0 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Heavy" fill="#1e293b" radius={[4, 4, 0, 0]} name="Heavy">
+                    <LabelList dataKey="Heavy" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
-                  <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(v: number) => v > 0 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Medium" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Medium">
+                    <LabelList dataKey="Medium" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
-                  <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(v: number) => v > 0 ? `${Math.round(v)}%` : ''} style={{ fill: '#fff', fontSize: 10 }} />
+                  <Bar dataKey="Light" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Light">
+                    <LabelList dataKey="Light" position="center" angle={-90} formatter={(value: number) => value > 0 ? `${Math.round(value)}%` : ''} style={{ fill: '#ffffff', fontSize: 10, fontWeight: 'bold' }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Grid Overview and Search */}
+          {/* Bottom Section: Live Zone Overview & Search */}
           <div className="space-y-4">
              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -412,18 +436,26 @@ export default function Home() {
                    <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
                 </div>
 
+                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
                 {isAdmin && (
                    <div className="flex items-center gap-3">
                       {searchResult && (
                         <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-md text-xs border border-green-100 flex items-center gap-2">
                           <span className="font-bold">{searchResult.vehicle_number}</span>
                           <span>in {searchResult.zone_name}</span>
-                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1" onClick={() => setSearchResult(null)}>×</Button>
+                          <Button variant="ghost" size="icon" className="h-4 w-4 ml-1 hover:bg-green-100 rounded-full" onClick={() => setSearchResult(null)}>×</Button>
                         </div>
                       )}
                       <form onSubmit={handleSearch} className="flex gap-2">
-                          <Input placeholder="Find Vehicle..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-white w-[180px] h-9 text-sm" />
-                          <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3"><Search className="w-3.5 h-3.5" /></Button>
+                          <Input 
+                              placeholder="Find Vehicle..." 
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              className="bg-white w-[180px] h-9 text-sm"
+                          />
+                          <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3">
+                            <Search className="w-3.5 h-3.5" />
+                          </Button>
                       </form>
                    </div>
                 )}
@@ -431,116 +463,67 @@ export default function Home() {
              
              <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
                 {zones.map((zone) => (
-                  <div key={zone.id} className="relative group">
-                    <ZoneCard zone={zone} />
-                    {isAdmin && (
-                      <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
-                        <Button 
-                          size="icon" 
-                          className="h-6 w-6 bg-white shadow-md border hover:bg-slate-100"
-                          onClick={() => {
-                            setEditingZone(zone);
-                            setZoneForm({
-                              name: zone.name,
-                              heavy: zone.limits.heavy,
-                              medium: zone.limits.medium,
-                              light: zone.limits.light
-                            });
-                            setIsZoneModalOpen(true);
-                          }}
-                        >
-                          <Pencil className="h-3 w-3 text-blue-600" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+                  <ZoneCard key={zone.id} zone={zone} />
                 ))}
              </div>
           </div>
+
         </div>
       </div>
 
-      {/* MODAL: ZONE MANAGEMENT (Add/Edit) */}
-      <Dialog open={isZoneModalOpen} onOpenChange={setIsZoneModalOpen}>
-        <DialogContent className="bg-black text-white border-slate-800 sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {editingZone ? "Edit Parking Zone" : "Create New Parking Zone"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label className="text-right text-slate-400">Name</Label>
-              <Input 
-                className="col-span-3 bg-slate-900 border-slate-700 text-white" 
-                value={zoneForm.name}
-                onChange={(e) => setZoneForm({...zoneForm, name: e.target.value})}
-              />
-            </div>
-            <div className="text-center text-[10px] font-bold text-slate-500 uppercase tracking-widest border-t border-slate-800 pt-4">
-              Vehicle Type Limits
-            </div>
-            {['heavy', 'medium', 'light'].map((type) => (
-              <div key={type} className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right capitalize text-slate-400">{type}</Label>
-                <Input 
-                  type="number" 
-                  className="col-span-3 bg-slate-900 border-slate-700 text-white"
-                  value={zoneForm[type as keyof typeof zoneForm]}
-                  onChange={(e) => setZoneForm({...zoneForm, [type]: parseInt(e.target.value) || 0})}
-                />
-              </div>
-            ))}
-            <div className="flex justify-between items-center border-t border-slate-800 pt-4">
-              <span className="text-sm font-bold text-slate-400">Total Capacity</span>
-              <span className="text-xl font-black text-white">{currentFormTotal}</span>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsZoneModalOpen(false)} className="text-slate-400 hover:text-white">Cancel</Button>
-            <Button onClick={handleSaveZone} className="bg-white text-black hover:bg-slate-200">
-              {editingZone ? "Save Changes" : "Create Parking"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL: TICKET GENERATION */}
+      {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
       {isAdmin && (
-        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader><DialogTitle>Generate Parking Ticket</DialogTitle></DialogHeader>
+        <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
+          <DialogContent 
+            hideOverlay 
+            className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
+          >
+            <DialogHeader>
+              <DialogTitle>Generate Parking Ticket</DialogTitle>
+            </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right">Vehicle No.</Label>
-                <Input value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" />
+                <Label htmlFor="vehicle-no" className="text-right">Vehicle No.</Label>
+                <Input id="vehicle-no" value={ticketData.vehicleNumber} onChange={(e) => setTicketData({ ...ticketData, vehicleNumber: e.target.value })} className="col-span-3" placeholder="KL-01-AB-1234" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right">Type</Label>
+                <Label htmlFor="vehicle-type" className="text-right">Type</Label>
                 <Select value={ticketData.type} onValueChange={(val: VehicleType) => setTicketData({ ...ticketData, type: val })}>
-                  <SelectTrigger className="col-span-3"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="light">Light Vehicle</SelectItem>
-                    <SelectItem value="medium">Medium Vehicle</SelectItem>
-                    <SelectItem value="heavy">Heavy Vehicle</SelectItem>
+                    <SelectItem value="light">Light Vehicle (Car/Jeep)</SelectItem>
+                    <SelectItem value="medium">Medium Vehicle (Van/Mini Bus)</SelectItem>
+                    <SelectItem value="heavy">Heavy Vehicle (Bus/Truck)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right">Zone</Label>
+                <Label htmlFor="zone" className="text-right">Zone</Label>
                 <Select value={ticketData.zoneId || "auto"} onValueChange={(val) => setTicketData({ ...ticketData, zoneId: val === "auto" ? "" : val })}>
-                  <SelectTrigger className="col-span-3"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Auto-assign (Any Available)" />
+                  </SelectTrigger>
                   <SelectContent className="max-h-[200px]">
-                    <SelectItem value="auto">Auto-assign</SelectItem>
-                    {zones.map((z) => <SelectItem key={z.id} value={z.id}>{z.name}</SelectItem>)}
+                    <SelectItem value="auto">Auto-assign (Any Available)</SelectItem>
+                    {zones.map((zone) => (
+                      <SelectItem key={zone.id} value={zone.id}>{zone.name} ({zone.capacity - zone.occupied} free)</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="slot" className="text-right">Slot (Opt)</Label>
+                <Input id="slot" value={ticketData.slot} onChange={(e) => setTicketData({ ...ticketData, slot: e.target.value })} className="col-span-3" placeholder="e.g. A-12" />
               </div>
             </div>
-            <DialogFooter><Button onClick={handleGenerateTicket}>Generate Ticket</Button></DialogFooter>
+            <DialogFooter>
+              <Button type="submit" onClick={handleGenerateTicket}>Generate Ticket</Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
     </div>
   );
-}
+};
