@@ -161,7 +161,7 @@ export default function Home() {
   // Chart Data Preparation
 const barChartData = zones
   .filter(zone => zone.occupied > 0) // ✅ HIDE EMPTY ZONES
-  .map(zone => {
+  .map((zone, index) => {
     let heavyPct = 0;
     let mediumPct = 0;
     let lightPct = 0;
@@ -177,7 +177,7 @@ const barChartData = zones
     }
 
     return {
-      name: `P${zone.id.replace('Z', '')}`,
+      name: `P${index + 1}`,
       Heavy: heavyPct,
       Medium: mediumPct,
       Light: lightPct,
@@ -288,7 +288,7 @@ const barChartData = zones
              <div className="flex justify-between items-center border-b border-slate-50 pb-1 mb-1">
                <span className="font-medium text-slate-500 text-xs">Composition</span>
                <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">
-                 {hoveredZone? `P${hoveredZone.id.replace('Z', '')}`: "Total"}
+                 {hoveredZone ? `P${zones.findIndex(z => z.id === hoveredZone.id) + 1}`: "Total"}
                </span>
              </div>
              
@@ -484,9 +484,16 @@ const barChartData = zones
              </div>
              
              <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
-                {zones.map((zone) => (
-                  <ZoneCard key={zone.id} zone={zone} />
-                ))}
+                {zones.map((zone, index) => (
+  <ZoneCard
+    key={zone.id}
+    zone={{
+      ...zone,
+      id: `Z${index + 1}` // ✅ UI label override
+    }}
+  />
+))}
+
              </div>
           </div>
 
