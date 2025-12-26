@@ -1,4 +1,5 @@
 import { useParking } from "@/lib/parking-context";
+import { apiPost } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -34,23 +35,47 @@ export default function AdminProfile() {
     setLocation("/");
   };
 
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (registerAdmin(formData.email, formData.password, formData.name, formData.policeId)) {
-      toast({
-        title: "Officer Registered",
-        description: `${formData.name} has been added to the system.`,
-      });
-      setNewAdminOpen(false);
-      setFormData({ name: "", policeId: "", email: "", password: "" });
-    } else {
-      toast({
-        variant: "destructive",
-        title: "Registration Failed",
-        description: "An officer with this email already exists.",
-      });
+  const handleRegister = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  try {
+    const res = await fetch("/api/admin/officers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: formData.name,
+        policeId: formData.policeId,   // ✅ correct key
+        email: formData.email,
+        password: formData.password,  // ✅ REQUIRED
+      }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg);
     }
-  };
+
+    toast({
+      title: "Officer Registered",
+      description: `${formData.name} has been added successfully.`,
+    });
+
+    setNewAdminOpen(false);
+    setFormData({
+      name: "",
+      policeId: "",
+      email: "",
+      password: "",
+    });
+  } catch (err: any) {
+    toast({
+      variant: "destructive",
+      title: "Registration Failed",
+      description: err.message || "Unable to register officer",
+    });
+  }
+};
+
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

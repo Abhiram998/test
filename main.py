@@ -105,6 +105,9 @@ def startup_db_check():
     """
     print("📋 Performing Startup Database Check...")
     with next(get_db()) as db:
+
+        db.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+
         # 1. Create Snapshots table if missing
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -114,6 +117,21 @@ def startup_db_check():
                 data TEXT NOT NULL
             )
         """))
+
+        # 1.1 Create officers table
+        db.execute(text("""
+CREATE TABLE IF NOT EXISTS officers (
+    officer_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    badge_number TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT DEFAULT 'OFFICER',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+)
+        """))
+
         
         # 2. Ensure vehicle types exist for zone creation logic
         # This prevents 'Foreign Key' or 'Mapping' errors during zone setup.
@@ -223,7 +241,7 @@ def delete_zone_public(
     Direct bridge for frontend 'Delete' functionality.
     Forwards the request to the soft-delete administrative logic.
     """
-    return delete_zone(zone_id, db)
+    return delete_zone_admin(zone_id, db)
 
 # =================================================================
 # ADMIN: CORE ZONE BUSINESS LOGIC
@@ -382,7 +400,7 @@ def update_zone(
         raise HTTPException(500, f"Database error during update: {str(e)}")
 
 @app.delete("/api/admin/zones/{zone_id}", tags=["Admin"])
-def delete_zone(zone_id: str, db: Session = Depends(get_db)):
+def delete_zone_admin(zone_id: str, db: Session = Depends(get_db)):
     """
     Deactivates a zone (Soft Delete).
     Fails if there are still vehicles parked inside.
@@ -417,6 +435,164 @@ def delete_zone(zone_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Database error during deletion: {str(e)}")
+    
+
+# =================================================================
+# ADMIN: OFFICER MANAGEMENT
+# =================================================================
+
+# =================================================================
+# ADMIN AUTH: LOGIN
+# =================================================================
+
+@app.post("/api/admin/login", tags=["Admin"])
+def admin_login(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Authenticates an officer/admin using email + password.
+    """
+
+    email = payload.get("email")
+    password = payload.get("password")
+
+    if not email or not password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email and password are required"
+        )
+
+    try:
+        officer = db.execute(text("""
+            SELECT
+                officer_id,
+                name,
+                badge_number,
+                email,
+                role
+            FROM officers
+            WHERE email = :email
+              AND password = crypt(:password, password)
+              AND is_active = TRUE
+        """), {
+            "email": email,
+            "password": password
+        }).mappings().first()
+
+        if not officer:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password"
+            )
+
+        return {
+            "success": True,
+            "user": {
+                "id": officer["officer_id"],
+                "name": officer["name"],
+                "policeId": officer["badge_number"],
+                "email": officer["email"],
+                "role": officer["role"]
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/admin/officers", tags=["Admin"])
+def register_officer(payload: dict = Body(...), db: Session = Depends(get_db)):
+    """
+    Registers a new parking officer.
+    Expected payload (frontend format):
+    {
+        name: string,
+        policeId: string,
+        email: string,
+        password: string
+    }
+    """
+
+    name = payload.get("name")
+    police_id = payload.get("policeId")
+    email = payload.get("email")
+    password = payload.get("password")
+
+    # 🔐 Basic validation
+    if not name or not police_id or not email or not password:
+        raise HTTPException(
+            status_code=400,
+            detail="name, policeId, email, and password are required"
+        )
+
+    try:
+        # 🔒 Store password safely (simple hash for now)
+        hashed_password = db.execute(
+            text("SELECT crypt(:p, gen_salt('bf'))"),
+            {"p": password}
+        ).scalar()
+
+        db.execute(text("""
+            INSERT INTO officers (
+                name,
+                badge_number,
+                email,
+                password,
+                role,
+                is_active
+            )
+            VALUES (
+                :name,
+                :badge,
+                :email,
+                :password,
+                'OFFICER',
+                TRUE
+            )
+        """), {
+            "name": name,
+            "badge": police_id,
+            "email": email,
+            "password": hashed_password
+        })
+
+        db.commit()
+        return {
+            "success": True,
+            "message": "Officer registered successfully"
+        }
+
+    except Exception as e:
+        db.rollback()
+
+        # Duplicate police ID or email
+        if "unique" in str(e).lower():
+            raise HTTPException(
+                status_code=400,
+                detail="Officer with this Police ID or Email already exists"
+            )
+
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/admin/officers", tags=["Admin"])
+def list_officers(db: Session = Depends(get_db)):
+    """
+    Returns all registered officers (safe fields only).
+    """
+    rows = db.execute(text("""
+        SELECT
+            officer_id,
+            name,
+            badge_number AS "policeId",
+            email,
+            role,
+            is_active,
+            created_at
+        FROM officers
+        ORDER BY created_at DESC
+    """)).mappings().all()
+
+    return rows
 
 # =================================================================
 # VEHICLE OPERATIONS (ENTER, EXIT, SEARCH)
