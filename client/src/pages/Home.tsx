@@ -159,19 +159,21 @@ export default function Home() {
 
 
   // Chart Data Preparation
-  const barChartData = zones.map(zone => {
+const barChartData = zones
+  .filter(zone => zone.occupied > 0) // ✅ HIDE EMPTY ZONES
+  .map(zone => {
     let heavyPct = 0;
     let mediumPct = 0;
     let lightPct = 0;
 
     if (zone.limits) {
-       heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
-       mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
-       lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
+      heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
+      mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
+      lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
     } else {
-       heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
-       mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
-       lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
+      heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
+      mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
+      lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
     }
 
     return {
@@ -181,8 +183,8 @@ export default function Home() {
       Light: lightPct,
       occupied: zone.occupied,
       capacity: zone.capacity,
-      limits: zone.limits, 
-      originalZone: zone 
+      limits: zone.limits,
+      originalZone: zone
     };
   });
 
