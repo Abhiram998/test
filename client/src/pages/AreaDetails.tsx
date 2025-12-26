@@ -24,6 +24,7 @@ export default function AreaDetails() {
   
   const percentage = Math.round((occupiedCount / zone.capacity) * 100);
   const isFull = percentage >= 100;
+  const displayZoneNumber = zone.name.replace("Nilakkal Parking Zone ", "");
 
   useEffect(() => {
     if (!id) return;
@@ -78,8 +79,10 @@ export default function AreaDetails() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Area {zone.id}</h1>
-          <p className="text-muted-foreground">{zone.name}</p>
+<h1 className="text-2xl font-bold text-foreground">
+  Area Z{displayZoneNumber}
+</h1>
+<p className="text-muted-foreground">{zone.name}</p>
         </div>
       </div>
 
