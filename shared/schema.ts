@@ -3,6 +3,7 @@ import { pgTable, text, varchar, integer, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// User schema for authentication
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -17,6 +18,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
+// Parking Zone schema matching your dashboard needs
 export const zones = pgTable("zones", {
   id: varchar("id").primaryKey(), 
   name: text("name").notNull(),

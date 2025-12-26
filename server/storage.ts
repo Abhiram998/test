@@ -19,6 +19,11 @@ export class MemStorage implements IStorage {
   constructor() {
     this.users = new Map();
     this.zones = new Map();
+    this.initializeDefaultData();
+  }
+
+  private initializeDefaultData() {
+    // Optional: Add initial zones here if needed for testing
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -41,6 +46,7 @@ export class MemStorage implements IStorage {
   }
 
   async createZone(insertZone: InsertZone): Promise<ParkingZone> {
+    // Create string-based ID like Z1, Z2...
     const id = `Z${this.zones.size + 1}`;
     const newZone: ParkingZone = {
       ...insertZone,
@@ -54,7 +60,7 @@ export class MemStorage implements IStorage {
 
   async updateZone(id: string, data: Partial<ParkingZone>): Promise<ParkingZone> {
     const existing = this.zones.get(id);
-    if (!existing) throw new Error("Zone not found");
+    if (!existing) throw new Error("Terminal node not found");
     const updated = { ...existing, ...data };
     this.zones.set(id, updated);
     return updated;
@@ -66,10 +72,15 @@ export class MemStorage implements IStorage {
 
   async createVehicleEntry(entry: any): Promise<any> {
     const zone = this.zones.get(entry.zoneId);
-    if (!zone) throw new Error("Zone not found");
+    if (!zone) throw new Error("Target node offline or not found");
+    
+    // Update local node occupancy
     zone.occupied += 1;
     const type = entry.type as keyof typeof zone.stats;
-    zone.stats[type] += 1;
+    if (zone.stats[type] !== undefined) {
+        zone.stats[type] += 1;
+    }
+    
     this.zones.set(zone.id, zone);
     return { success: true };
   }
