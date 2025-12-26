@@ -24,7 +24,7 @@ export default function AreaDetails() {
   
   const percentage = Math.round((occupiedCount / zone.capacity) * 100);
   const isFull = percentage >= 100;
-  const displayZoneNumber = zone.name.replace("Nilakkal Parking Zone ", "");
+  const displayZoneNumber = zone.id.replace("Z", "");
 
   useEffect(() => {
     if (!id) return;
