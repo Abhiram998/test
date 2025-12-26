@@ -767,6 +767,63 @@ def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
 # REPORTS & ANALYTICS
 # =================================================================
 
+@app.get("/api/forecast", tags=["Analytics"])
+def get_forecast(db: Session = Depends(get_db)):
+    """
+    Rule-based parking forecast using last 7 days peak occupancy.
+    Used by Forecast & Analytics frontend page.
+    """
+
+    # 1️⃣ Get peak vehicles per day from snapshots (last 7 days)
+    rows = db.execute(text("""
+        SELECT
+            DATE(snapshot_time) AS day,
+            MAX(records_count) AS peak
+        FROM snapshots
+        WHERE snapshot_time >= NOW() - INTERVAL '7 days'
+        GROUP BY DATE(snapshot_time)
+        ORDER BY day
+    """)).mappings().all()
+
+    if not rows:
+        return {
+            "probability": 0,
+            "trend": [],
+            "daysAnalyzed": 0,
+            "message": "Insufficient data for forecast"
+        }
+
+    # 2️⃣ Get total active parking capacity
+    total_capacity = db.execute(text("""
+        SELECT COALESCE(SUM(total_capacity), 1)
+        FROM parking_zones
+        WHERE status = 'ACTIVE'
+    """)).scalar()
+
+    trend = []
+    high_days = 0
+
+    # 3️⃣ Build trend + probability
+    for r in rows:
+        occupancy_pct = round((r["peak"] / total_capacity) * 100)
+
+        trend.append({
+            "date": r["day"].isoformat(),
+            "occupancy": occupancy_pct
+        })
+
+        if occupancy_pct >= 85:
+            high_days += 1
+
+    probability = round((high_days / len(rows)) * 100)
+
+    return {
+        "probability": probability,
+        "trend": trend,
+        "daysAnalyzed": len(rows)
+    }
+
+
 @app.get("/api/reports", tags=["Reporting"])
 def get_reports(
     zone: Optional[str] = Query(default=None),
