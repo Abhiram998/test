@@ -447,18 +447,11 @@ def delete_zone_admin(zone_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/admin/login", tags=["Admin"])
 def admin_login(payload: dict = Body(...), db: Session = Depends(get_db)):
-    """
-    Authenticates an officer/admin using email + password.
-    """
-
     email = payload.get("email")
     password = payload.get("password")
 
     if not email or not password:
-        raise HTTPException(
-            status_code=400,
-            detail="Email and password are required"
-        )
+        raise HTTPException(status_code=400, detail="Email and password required")
 
     try:
         officer = db.execute(text("""
@@ -472,16 +465,14 @@ def admin_login(payload: dict = Body(...), db: Session = Depends(get_db)):
             WHERE email = :email
               AND password = crypt(:password, password)
               AND is_active = TRUE
+            LIMIT 1
         """), {
             "email": email,
             "password": password
         }).mappings().first()
 
         if not officer:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password"
-            )
+            raise HTTPException(status_code=401, detail="Invalid email or password")
 
         return {
             "success": True,
