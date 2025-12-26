@@ -18,15 +18,18 @@ export function ZoneCard({
   detailed = false,
 }: {
   zone: ParkingZone;
-  displayIndex?: number;
+  displayIndex?: number; // ✅ UI ONLY
   detailed?: boolean;
 }) {
   const { isAdmin } = useParking();
+
   const percentage = Math.round((zone.occupied / zone.capacity) * 100);
   const isFull = percentage >= 100;
   const isNearFull = percentage > 85;
+
   const [showVehicles, setShowVehicles] = useState(false);
 
+  // ✅ SAFE FALLBACK
   const vehicles = zone.vehicles ?? [];
 
   const getVehicleIcon = (type: string) => {
@@ -40,6 +43,7 @@ export function ZoneCard({
     }
   };
 
+  // ================= CARD CONTENT =================
   const CardContent = (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -51,6 +55,7 @@ export function ZoneCard({
           : "border-border hover:border-primary/30"
       )}
     >
+      {/* HEADER */}
       <div className="flex justify-between items-center mb-1">
         <div className="flex items-center gap-1.5">
           <div
@@ -61,8 +66,8 @@ export function ZoneCard({
                 : "bg-primary/10 text-primary border-primary/10"
             )}
           >
-            {/* ✅ UI LABEL ONLY */}
-            {displayIndex ? `Z${displayIndex}` : zone.id}
+            {/* ✅ UI LABEL ONLY — NEVER USED FOR ROUTING */}
+            {displayIndex !== undefined ? `Z${displayIndex}` : zone.id}
           </div>
 
           <h3 className="font-bold text-xs text-foreground whitespace-nowrap">
@@ -84,6 +89,7 @@ export function ZoneCard({
         </span>
       </div>
 
+      {/* OCCUPANCY */}
       <div className="space-y-1">
         <div className="flex justify-between text-[10px] items-end">
           <span className="text-muted-foreground font-medium">Occ</span>
@@ -106,12 +112,13 @@ export function ZoneCard({
         />
       </div>
 
-      {/* Vehicle dialog */}
+      {/* VEHICLE LIST DIALOG */}
       <Dialog open={showVehicles} onOpenChange={setShowVehicles}>
         <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Zone {displayIndex ? `Z${displayIndex}` : zone.id} - Vehicles
+              Zone {displayIndex !== undefined ? `Z${displayIndex}` : zone.id} –
+              Vehicles
             </DialogTitle>
           </DialogHeader>
 
@@ -138,6 +145,7 @@ export function ZoneCard({
                     >
                       {getVehicleIcon(v.type)}
                     </div>
+
                     <div>
                       <div className="font-mono font-bold text-sm">
                         {v.number}
@@ -156,8 +164,9 @@ export function ZoneCard({
     </motion.div>
   );
 
+  // ================= RENDER =================
   if (detailed) return CardContent;
 
-  // ✅ ALWAYS USE BACKEND ID FOR ROUTING
+  // ✅ ALWAYS USE BACKEND ZONE ID FOR ROUTING
   return <Link href={`/zone/${zone.id}`}>{CardContent}</Link>;
 }
