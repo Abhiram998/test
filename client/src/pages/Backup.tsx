@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParking } from "@/lib/parking-context";
 import PoliceBackup, { VehicleRecord } from "@/components/PoliceBackup";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { ArrowLeft, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api";
@@ -17,6 +17,7 @@ type SnapshotMeta = {
 /* ================= COMPONENT ================= */
 
 export default function Backup() {
+  const [, setLocation] = useLocation();
   const { restoreData } = useParking();
   const { toast } = useToast();
 
@@ -97,8 +98,9 @@ const activateSnapshotView = async (snapshotId: number) => {
       description: "System is now showing backup snapshot data.",
     });
 
-    // Force refresh of dashboard state
-    restoreData([]);
+    // ✅ FORCE FULL DATA REFRESH (this is the key)
+    setLocation("/home");
+    setTimeout(() => setLocation("/admin"), 50);
 
   } catch (err) {
     console.error("Snapshot activation failed:", err);
