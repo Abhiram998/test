@@ -38,6 +38,9 @@ export default function Predictions() {
   const [tomorrowProbability, setTomorrowProbability] = useState<number>(0);
   const [zonePredictions, setZonePredictions] = useState<ZonePrediction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hourlyData, setHourlyData] = useState<
+  { time: string; probability: number }[]
+>([]);
 
   /* =========================
      FETCH DATA
@@ -53,6 +56,7 @@ export default function Predictions() {
         setWeeklyData(data.past7Days || []);
         setTomorrowProbability(data.tomorrow?.probability || 0);
         setZonePredictions(data.zones || []);
+        setHourlyData(data.hourly || []);
       })
       .catch((err) => {
         console.error("Prediction fetch error:", err);
@@ -63,6 +67,13 @@ export default function Predictions() {
   /* =========================
      UI
   ========================= */
+    if (loading) {
+    return (
+      <div className="h-[60vh] flex items-center justify-center text-muted-foreground">
+        Loading predictions…
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -100,10 +111,12 @@ export default function Predictions() {
               </h2>
 
               <p className="text-blue-100">
-                {tomorrowProbability > 70
-                  ? "High probability of congestion"
-                  : "Low probability of reaching full capacity"}
-              </p>
+  {tomorrowProbability > 70
+    ? "High congestion expected"
+    : tomorrowProbability > 40
+    ? "Moderate traffic expected"
+    : "Low congestion expected"}
+</p>
             </div>
 
             <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
@@ -114,28 +127,27 @@ export default function Predictions() {
           {/* Decorative Area Chart */}
           <div className="h-[120px] mt-6">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={[
-                  { x: "now", y: 0 },
-                  { x: "tomorrow", y: tomorrowProbability },
-                ]}
-              >
-                <defs>
-                  <linearGradient id="probFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#fff" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#fff" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="x" hide />
-                <YAxis hide />
-                <Area
-                  type="monotone"
-                  dataKey="y"
-                  stroke="#fff"
-                  strokeWidth={2}
-                  fill="url(#probFill)"
-                />
-              </AreaChart>
+             <AreaChart data={hourlyData}>
+  <defs>
+    <linearGradient id="probFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="5%" stopColor="#ffffff" stopOpacity={0.35} />
+      <stop offset="95%" stopColor="#ffffff" stopOpacity={0} />
+    </linearGradient>
+  </defs>
+
+  <XAxis dataKey="time" hide />
+  <YAxis hide />
+
+  <Area
+    type="monotone"
+    dataKey="probability"
+    stroke="#fff"
+    strokeWidth={2}
+    fill="url(#probFill)"
+    activeDot={{ r: 4, fill: "#fff" }}
+  />
+</AreaChart>
+
             </ResponsiveContainer>
           </div>
         </CardContent>
@@ -194,12 +206,6 @@ export default function Predictions() {
           ))}
         </div>
       </div>
-
-      {loading && (
-        <p className="text-center text-muted-foreground">
-          Loading predictions…
-        </p>
-      )}
     </div>
   );
 }

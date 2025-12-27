@@ -821,7 +821,7 @@ def get_reports(
 def get_predictions(db: Session = Depends(get_db)):
 
     # -------------------------------------------------
-    # 1️⃣ Past 7 days peak occupancy
+    # 1️⃣ Past 7 days peak occupancy (from snapshots)
     # -------------------------------------------------
     trend_rows = db.execute(text("""
         SELECT
@@ -847,20 +847,21 @@ def get_predictions(db: Session = Depends(get_db)):
         })
 
     # -------------------------------------------------
-    # 2️⃣ Trend direction
+    # 2️⃣ Trend direction (increase / decrease)
     # -------------------------------------------------
     if len(past7) >= 2:
         trend_delta = past7[-1]["occupancy"] - past7[0]["occupancy"]
     else:
         trend_delta = 0
 
+    # Normalize trend to 0 → 1 range
     trend_factor = min(max(trend_delta / 20, 0), 1)
 
     # -------------------------------------------------
-    # 3️⃣ Live load
+    # 3️⃣ Live occupancy pressure
     # -------------------------------------------------
     live_occupied = db.execute(text("""
-        SELECT COALESCE(SUM(current_occupied),0)
+        SELECT COALESCE(SUM(current_occupied), 0)
         FROM parking_zones
         WHERE status='ACTIVE'
     """)).scalar()
@@ -868,7 +869,7 @@ def get_predictions(db: Session = Depends(get_db)):
     live_ratio = live_occupied / total_capacity
 
     # -------------------------------------------------
-    # 4️⃣ Peak pressure
+    # 4️⃣ Historical peak pressure
     # -------------------------------------------------
     peak_ratio = max(
         (d["occupancy"] / 100 for d in past7),
@@ -876,18 +877,33 @@ def get_predictions(db: Session = Depends(get_db)):
     )
 
     # -------------------------------------------------
-    # 5️⃣ Final probability (Weighted)
+    # 5️⃣ FINAL PROBABILITY (Weighted Model)
     # -------------------------------------------------
     probability = round(
-        (peak_ratio * 50) +
-        (trend_factor * 30) +
-        (live_ratio * 20)
+        (peak_ratio * 50) +      # history impact
+        (trend_factor * 30) +    # rising/falling trend
+        (live_ratio * 20)        # current live load
     )
 
     probability = min(max(probability, 0), 100)
 
     # -------------------------------------------------
-    # 6️⃣ Zone-wise probability
+    # 6️⃣ Hourly curve for tomorrow (frontend graph)
+    # -------------------------------------------------
+    hourly = []
+    base = probability * 0.4
+    peak = probability
+
+    for h in range(6):
+        hourly.append({
+            "time": f"{4 + h * 4}:00",
+            "probability": round(
+                base + (peak - base) * (h / 5)
+            )
+        })
+
+    # -------------------------------------------------
+    # 7️⃣ Zone-wise probability
     # -------------------------------------------------
     zone_rows = db.execute(text("""
         SELECT zone_id, total_capacity, current_occupied
@@ -901,11 +917,13 @@ def get_predictions(db: Session = Depends(get_db)):
         zone_ratio = z["current_occupied"] / max(z["total_capacity"], 1)
         zones.append({
             "zone": z["zone_id"],
-            "probability": round((zone_ratio * 60) + (probability * 0.4))
+            "probability": round(
+                (zone_ratio * 60) + (probability * 0.4)
+            )
         })
 
     # -------------------------------------------------
-    # ✅ FINAL RESPONSE (ONLY ONE RETURN)
+    # ✅ FINAL RESPONSE (SINGLE RETURN)
     # -------------------------------------------------
     return {
         "tomorrow": {
@@ -923,9 +941,11 @@ def get_predictions(db: Session = Depends(get_db)):
                 else "Low congestion expected"
             )
         },
+        "hourly": hourly,
         "past7Days": past7,
         "zones": zones
     }
+
 # =================================================================
 # SNAPSHOT HISTORY
 # =================================================================
