@@ -23,12 +23,18 @@ type BackupSnapshot = {
 interface PoliceBackupProps {
   getRecords: () => Promise<VehicleRecord[]>;
   onRestore: (records: VehicleRecord[]) => void;
+
+  // ✅ ADD THIS (for server snapshot restore)
+  onSnapshotRestore?: (snapshotId: number) => Promise<void>;
+
   appName?: string;
 }
+
 
 export default function PoliceBackup({
   getRecords,
   onRestore,
+  onSnapshotRestore, // ✅ ADD THIS
   appName = "nilakkal-police-admin"
 }: PoliceBackupProps) {
   const [snapshots, setSnapshots] = useState<BackupSnapshot[]>([]);
@@ -266,12 +272,22 @@ export default function PoliceBackup({
                 >
                   Download
                 </button>
-                <button
-                  onClick={() => onRestore(snap.data)}
-                  className="px-3 py-1 bg-blue-900/20 hover:bg-blue-900/40 text-[10px] text-blue-400 border border-blue-900/50 rounded font-bold"
-                >
-                  Restore
-                </button>
+               <button
+  onClick={async () => {
+    // 🟢 SERVER SNAPSHOT MODE
+    if (onSnapshotRestore) {
+      await onSnapshotRestore(snap.id);
+      return;
+    }
+
+    // 🔵 FALLBACK: Local restore (existing behavior)
+    onRestore(snap.data);
+  }}
+  className="px-3 py-1 bg-blue-900/20 hover:bg-blue-900/40 text-[10px] text-blue-400 border border-blue-900/50 rounded font-bold"
+>
+  Restore
+</button>
+
                 <button
                   onClick={() => handleDelete(snap.id)}
                   className="p-1 text-zinc-700 hover:text-red-500"

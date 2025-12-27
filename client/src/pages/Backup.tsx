@@ -83,6 +83,34 @@ export default function Backup() {
     }
   };
 
+
+/* ================= ACTIVATE SNAPSHOT VIEW ================= */
+
+const activateSnapshotView = async (snapshotId: number) => {
+  try {
+    await fetch(`/api/snapshot/activate/${snapshotId}`, {
+      method: "POST",
+    });
+
+    toast({
+      title: "Snapshot Activated",
+      description: "System is now showing backup snapshot data.",
+    });
+
+    // Force refresh of dashboard state
+    restoreData([]);
+
+  } catch (err) {
+    console.error("Snapshot activation failed:", err);
+    toast({
+      variant: "destructive",
+      title: "Restore Failed",
+      description: "Could not activate snapshot view.",
+    });
+  }
+};
+
+
   /* ================= UI ================= */
 
   return (
@@ -123,10 +151,11 @@ export default function Backup() {
         {/* POLICE BACKUP COMPONENT */}
         <div className="pt-2">
           <PoliceBackup
-            getRecords={getRecords}
-            onRestore={restoreData}
-            appName="nilakkal-police-admin"
-          />
+  getRecords={getRecords}
+  onRestore={restoreData}
+  onSnapshotRestore={activateSnapshotView}
+  appName="nilakkal-police-admin"
+/>
         </div>
       </div>
 

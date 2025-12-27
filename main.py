@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session
 from db import get_db
 
 # =================================================================
+# SNAPSHOT VIEW MODE (GLOBAL STATE)
+# =================================================================
+
+ACTIVE_SNAPSHOT_ID: Optional[int] = None
+
+# =================================================================
 # ENVIRONMENT & INITIALIZATION
 # =================================================================
 load_dotenv()
@@ -169,13 +175,40 @@ def health():
 # =================================================================
 # LIVE DASHBOARD & ZONE MANAGEMENT (FRONTEND WRAPPERS)
 # =================================================================
-
 @app.get("/api/zones", tags=["Dashboard"])
 def get_zones(db: Session = Depends(get_db)):
-    """
-    Fetches all active parking zones with their real-time occupancy
-    and type-specific limits (Heavy/Medium/Light).
-    """
+
+    # ================= SNAPSHOT MODE =================
+    if ACTIVE_SNAPSHOT_ID:
+
+        snap = db.execute(
+            text("SELECT data FROM snapshots WHERE id = :id"),
+            {"id": ACTIVE_SNAPSHOT_ID}
+        ).scalar()
+
+        if not snap:
+            return []
+
+        records = json.loads(snap)
+
+        # Aggregate snapshot data into zone format
+        zones = {}
+        for r in records:
+            zid = r["zone"]
+            zones.setdefault(zid, {
+                "id": zid,
+                "name": zid,
+                "capacity": 0,
+                "occupied": 0,
+                "limits": {"light": 0, "medium": 0, "heavy": 0},
+                "stats": {"light": 0, "medium": 0, "heavy": 0},
+            })
+
+            zones[zid]["occupied"] += 1
+            zones[zid]["stats"][r["type"].lower()] += 1
+
+        return list(zones.values())
+
     rows = db.execute(text("""
         SELECT
             z.zone_id,
@@ -591,7 +624,28 @@ def list_officers(db: Session = Depends(get_db)):
 
 @app.get("/api/zones/{zone_id}/vehicles", tags=["Vehicles"])
 def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
-    """Returns a list of all vehicles currently parked in a specific zone."""
+    
+    if ACTIVE_SNAPSHOT_ID:
+        snap = db.execute(
+            text("SELECT data FROM snapshots WHERE id = :id"),
+            {"id": ACTIVE_SNAPSHOT_ID}
+        ).scalar()
+
+        if not snap:
+            return []
+
+        records = json.loads(snap)
+        return [
+            {
+                "number": r["plate"],
+                "type": r["type"],
+                "ticketId": "SNAPSHOT",
+                "entryTime": r["timeIn"]
+            }
+            for r in records
+            if r["zone"] == zone_id
+        ]
+
     rows = db.execute(text("""
         SELECT
             v.vehicle_number AS number,
@@ -609,11 +663,32 @@ def get_zone_vehicles(zone_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/search", tags=["Vehicles"])
 def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
-    """
-    Enhanced search that looks for LIVE vehicles first.
-    If not found, it checks history to explain if the vehicle already left.
-    Uses regex-like cleaning to match plates regardless of formatting.
-    """
+
+    if ACTIVE_SNAPSHOT_ID:
+
+        snap = db.execute(
+            text("SELECT data FROM snapshots WHERE id = :id"),
+            {"id": ACTIVE_SNAPSHOT_ID}
+        ).scalar()
+
+        if snap:
+            records = json.loads(snap)
+            term = q.replace("-", "").replace(" ", "").upper()
+
+            for r in records:
+                if term in r["plate"].replace("-", "").upper():
+                    return {
+                        "vehicle": r["plate"],
+                        "ticketId": "SNAPSHOT",
+                        "status": "INSIDE",
+                        "entryTime": r["timeIn"],
+                        "exitTime": None,
+                        "zone": r["zone"],
+                        "message": "Snapshot data"
+                    }
+
+        raise HTTPException(404, "Vehicle not found in snapshot")
+  
     search_term = q.strip().replace("-", "").replace(" ", "").upper()
     
     # 1. Look for LIVE vehicle (Currently Inside)
@@ -981,6 +1056,35 @@ def create_snapshot(db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(500, str(e))
+    
+    # -------------------------------------------------
+# ACTIVATE SNAPSHOT VIEW (RESTORE BUTTON)
+# -------------------------------------------------
+
+@app.post("/api/snapshot/activate/{snapshot_id}", tags=["Diagnostics"])
+def activate_snapshot(snapshot_id: int):
+    global ACTIVE_SNAPSHOT_ID
+    ACTIVE_SNAPSHOT_ID = snapshot_id
+    return {
+        "success": True,
+        "mode": "SNAPSHOT",
+        "snapshotId": snapshot_id
+    }
+
+
+# -------------------------------------------------
+# RETURN TO LIVE DATA
+# -------------------------------------------------
+
+@app.post("/api/snapshot/live", tags=["Diagnostics"])
+def return_to_live():
+    global ACTIVE_SNAPSHOT_ID
+    ACTIVE_SNAPSHOT_ID = None
+    return {
+        "success": True,
+        "mode": "LIVE"
+    }
+
 
 # =================================================================
 # STATIC FRONTEND DELIVERY (SPA SUPPORT)
