@@ -819,110 +819,113 @@ def get_reports(
 
 @app.get("/api/predictions", tags=["Forecast"])
 def get_predictions(db: Session = Depends(get_db)):
-    """
-    Provides forecast & analytics data for the Forecast page.
-    Uses historical snapshots and current occupancy.
-    """
 
     # -------------------------------------------------
-    # 1️⃣ Past 7 days trend (daily peak occupancy %)
+    # 1️⃣ Past 7 days peak occupancy
     # -------------------------------------------------
     trend_rows = db.execute(text("""
         SELECT
             DATE(snapshot_time) AS day,
-            MAX(records_count) AS peak_vehicles
+            MAX(records_count) AS peak
         FROM snapshots
         WHERE snapshot_time >= NOW() - INTERVAL '7 days'
         GROUP BY DATE(snapshot_time)
-        ORDER BY day ASC
+        ORDER BY day
     """)).mappings().all()
 
     total_capacity = db.execute(text("""
-        SELECT COALESCE(SUM(total_capacity), 0)
+        SELECT COALESCE(SUM(total_capacity), 1)
         FROM parking_zones
-        WHERE status = 'ACTIVE'
+        WHERE status='ACTIVE'
     """)).scalar()
 
-    past_7_days = []
+    past7 = []
     for r in trend_rows:
-        percent = (
-            round((r["peak_vehicles"] / total_capacity) * 100)
-            if total_capacity > 0 else 0
-        )
-        past_7_days.append({
+        past7.append({
             "day": r["day"].strftime("%a"),
-            "occupancy": percent
+            "occupancy": round((r["peak"] / total_capacity) * 100)
         })
 
     # -------------------------------------------------
-    # 2️⃣ Tomorrow overall probability
-    # Rule: If avg of last 3 days > 70% → high probability
+    # 2️⃣ Trend direction
     # -------------------------------------------------
-    last_3 = past_7_days[-3:]
-    avg_3_day = (
-        sum(d["occupancy"] for d in last_3) / len(last_3)
-        if last_3 else 0
+    if len(past7) >= 2:
+        trend_delta = past7[-1]["occupancy"] - past7[0]["occupancy"]
+    else:
+        trend_delta = 0
+
+    trend_factor = min(max(trend_delta / 20, 0), 1)
+
+    # -------------------------------------------------
+    # 3️⃣ Live load
+    # -------------------------------------------------
+    live_occupied = db.execute(text("""
+        SELECT COALESCE(SUM(current_occupied),0)
+        FROM parking_zones
+        WHERE status='ACTIVE'
+    """)).scalar()
+
+    live_ratio = live_occupied / total_capacity
+
+    # -------------------------------------------------
+    # 4️⃣ Peak pressure
+    # -------------------------------------------------
+    peak_ratio = max(
+        (d["occupancy"] / 100 for d in past7),
+        default=0
     )
 
-    if avg_3_day > 85:
-        tomorrow_probability = 90
-    elif avg_3_day > 70:
-        tomorrow_probability = 70
-    elif avg_3_day > 50:
-        tomorrow_probability = 40
-    else:
-        tomorrow_probability = 10
+    # -------------------------------------------------
+    # 5️⃣ Final probability (Weighted)
+    # -------------------------------------------------
+    probability = round(
+        (peak_ratio * 50) +
+        (trend_factor * 30) +
+        (live_ratio * 20)
+    )
+
+    probability = min(max(probability, 0), 100)
 
     # -------------------------------------------------
-    # 3️⃣ Zone-wise probability (tomorrow)
+    # 6️⃣ Zone-wise probability
     # -------------------------------------------------
     zone_rows = db.execute(text("""
-        SELECT
-            zone_id,
-            total_capacity,
-            current_occupied
+        SELECT zone_id, total_capacity, current_occupied
         FROM parking_zones
-        WHERE status = 'ACTIVE'
-        ORDER BY created_at ASC
+        WHERE status='ACTIVE'
+        ORDER BY created_at
     """)).mappings().all()
 
-    zone_probabilities = []
+    zones = []
     for z in zone_rows:
-        pct = (
-            (z["current_occupied"] / z["total_capacity"]) * 100
-            if z["total_capacity"] > 0 else 0
-        )
-
-        if pct > 85:
-            prob = 90
-        elif pct > 70:
-            prob = 70
-        elif pct > 50:
-            prob = 40
-        else:
-            prob = 10
-
-        zone_probabilities.append({
+        zone_ratio = z["current_occupied"] / max(z["total_capacity"], 1)
+        zones.append({
             "zone": z["zone_id"],
-            "probability": round(prob)
+            "probability": round((zone_ratio * 60) + (probability * 0.4))
         })
 
     # -------------------------------------------------
-    # Final response
+    # ✅ FINAL RESPONSE (ONLY ONE RETURN)
     # -------------------------------------------------
     return {
         "tomorrow": {
-            "probability": tomorrow_probability,
+            "probability": probability,
+            "confidence": (
+                "HIGH" if probability > 70
+                else "MEDIUM" if probability > 40
+                else "LOW"
+            ),
             "message": (
-                "High probability of congestion"
-                if tomorrow_probability > 70
-                else "Low probability of reaching full capacity"
+                "High congestion expected"
+                if probability > 70
+                else "Moderate traffic expected"
+                if probability > 40
+                else "Low congestion expected"
             )
         },
-        "past7Days": past_7_days,
-        "zones": zone_probabilities
+        "past7Days": past7,
+        "zones": zones
     }
-
 # =================================================================
 # SNAPSHOT HISTORY
 # =================================================================
