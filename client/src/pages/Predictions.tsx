@@ -64,6 +64,16 @@ export default function Predictions() {
       .finally(() => setLoading(false));
   }, []);
 
+    /* =========================
+     SORT ZONES NUMERICALLY
+  ========================= */
+
+  const sortedZones = [...zonePredictions].sort(
+    (a, b) =>
+      parseInt(a.zone.replace("Z", "")) -
+      parseInt(b.zone.replace("Z", ""))
+  );
+
   /* =========================
      UI
   ========================= */
@@ -184,7 +194,7 @@ export default function Predictions() {
         </h3>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {zonePredictions.map((zone) => (
+          {sortedZones.map((zone) => (
             <div
               key={zone.zone}
               className="bg-card border p-3 rounded-lg flex justify-between items-center"

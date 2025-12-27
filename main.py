@@ -909,7 +909,7 @@ def get_predictions(db: Session = Depends(get_db)):
         SELECT zone_id, total_capacity, current_occupied
         FROM parking_zones
         WHERE status='ACTIVE'
-        ORDER BY created_at
+        ORDER BY CAST(SUBSTRING(zone_id, 2) AS INT)
     """)).mappings().all()
 
     zones = []
