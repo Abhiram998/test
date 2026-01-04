@@ -3,3 +3,33 @@ node_modules
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Environment files
+.env
+.env.*
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+backend.log
+diag_output.txt
+diag_utf8.txt
+exhaustive_audit.txt
+exhaustive_audit_utf8.txt
+names_repr.txt
+names_repr_utf8.txt
+probe_final.txt
+probe_output.txt
+probe_output_utf8.txt
+zone_debug_full.txt
+zone_debug_utf8.txt
+zone_dump.txt
+
+# Databases
+zones_state.json
