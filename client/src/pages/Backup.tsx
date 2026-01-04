@@ -17,7 +17,7 @@ type SnapshotMeta = {
 /* ================= COMPONENT ================= */
 
 export default function Backup() {
-  const { restoreData } = useParking();
+  const { restoreData, refreshData } = useParking();
   const { toast } = useToast();
 
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
@@ -54,7 +54,7 @@ export default function Backup() {
     try {
       // 1. Get current date for the report
       const today = new Date().toISOString().slice(0, 10);
-      
+
       // 2. Fetch all vehicles for today from the API
       // This is the source for "Quick Recovery"
       const rows = await apiGet<any[]>(`/api/reports?report_date=${today}`);
@@ -84,31 +84,32 @@ export default function Backup() {
   };
 
 
-/* ================= ACTIVATE SNAPSHOT VIEW ================= */
+  /* ================= ACTIVATE SNAPSHOT VIEW ================= */
 
-const activateSnapshotView = async (snapshotId: number) => {
-  try {
-    await fetch(`/api/snapshot/activate/${snapshotId}`, {
-      method: "POST",
-    });
+  const activateSnapshotView = async (snapshotId: number) => {
+    try {
+      await fetch(`/api/snapshot/activate/${snapshotId}`, {
+        method: "POST",
+      });
 
-    toast({
-      title: "Snapshot Activated",
-      description: "System is now showing backup snapshot data.",
-    });
+      toast({
+        title: "Snapshot Activated",
+        description: "System is now showing backup snapshot data.",
+      });
 
-    // Force refresh of dashboard state
-    restoreData([]);
+      // Force refresh of dashboard state
+      await refreshData();
+      // restoreData([]); // REMOVED: Caused ghost zones bug
 
-  } catch (err) {
-    console.error("Snapshot activation failed:", err);
-    toast({
-      variant: "destructive",
-      title: "Restore Failed",
-      description: "Could not activate snapshot view.",
-    });
-  }
-};
+    } catch (err) {
+      console.error("Snapshot activation failed:", err);
+      toast({
+        variant: "destructive",
+        title: "Restore Failed",
+        description: "Could not activate snapshot view.",
+      });
+    }
+  };
 
 
   /* ================= UI ================= */
@@ -136,7 +137,7 @@ const activateSnapshotView = async (snapshotId: number) => {
 
       {/* BACKUP PANEL - Dark UI as per screenshot */}
       <div className="bg-black p-6 rounded-lg shadow-xl border border-zinc-800 space-y-4">
-        
+
         {/* STATUS TEXT */}
         <div className="text-sm text-zinc-400 font-medium">
           {loading ? (
@@ -151,11 +152,11 @@ const activateSnapshotView = async (snapshotId: number) => {
         {/* POLICE BACKUP COMPONENT */}
         <div className="pt-2">
           <PoliceBackup
-  getRecords={getRecords}
-  onRestore={restoreData}
-  onSnapshotRestore={activateSnapshotView}
-  appName="nilakkal-police-admin"
-/>
+            getRecords={getRecords}
+            onRestore={restoreData}
+            onSnapshotRestore={activateSnapshotView}
+            appName="nilakkal-police-admin"
+          />
         </div>
       </div>
 

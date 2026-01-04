@@ -20,8 +20,8 @@ from db import get_db
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-print("🚀 FastAPI booting (Railway-safe mode)")
-print("🛠️ System: Nilakkal Parking Management")
+print("FastAPI booting (Railway-safe mode)")
+print("System: Nilakkal Parking Management")
 
 # =================================================================
 # FASTAPI APP CONFIGURATION
@@ -66,6 +66,7 @@ def trigger_auto_snapshot(db: Session):
         SELECT 
             v.vehicle_number AS plate,
             z.zone_id AS zone,
+            z.zone_name AS zone_name,
             pt.entry_time AS "timeIn",
             vt.type_name AS type
         FROM parking_tickets pt
@@ -73,6 +74,7 @@ def trigger_auto_snapshot(db: Session):
         JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
         JOIN parking_zones z ON pt.zone_id = z.zone_id
         WHERE pt.exit_time IS NULL
+          AND z.status = 'ACTIVE'
     """)).mappings().all()
 
     records = []
@@ -103,7 +105,7 @@ def startup_db_check():
     and that the vehicle types (Heavy, Medium, Light) are seeded if the
     database is fresh or has been cleared.
     """
-    print("📋 Performing Startup Database Check...")
+    print("Performing Startup Database Check...")
     with next(get_db()) as db:
 
         db.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
@@ -142,7 +144,7 @@ CREATE TABLE IF NOT EXISTS officers (
         """))
         
         db.commit()
-        print("✅ Startup Check Complete. Tables verified and Seeded.")
+        print("Startup Check Complete. Tables verified and Seeded.")
 
 # =================================================================
 # ROOT, HEALTH, & DIAGNOSTICS
@@ -186,7 +188,7 @@ def get_zones(db: Session = Depends(get_db)):
         JOIN zone_type_limits zl ON zl.zone_id = z.zone_id
         JOIN vehicle_types vt ON vt.id = zl.vehicle_type_id
         WHERE UPPER(z.status) = 'ACTIVE'
-        ORDER BY z.created_at ASC
+        ORDER BY z.zone_name ASC
     """)).fetchall()
 
     zones = {}
@@ -206,7 +208,7 @@ def get_zones(db: Session = Depends(get_db)):
 
     return list(zones.values())
 
-# 🟢 FIX: Wrapper for frontend Add Parking Button
+# FIX: Wrapper for frontend Add Parking Button
 @app.post("/api/zones", tags=["Dashboard"])
 def create_zone_public(payload: dict = Body(...), db: Session = Depends(get_db)):
     """
@@ -215,7 +217,7 @@ def create_zone_public(payload: dict = Body(...), db: Session = Depends(get_db))
     """
     return create_zone(payload, db)
 
-# 🟢 FIX: Wrapper for frontend Edit Zone
+# FIX: Wrapper for frontend Edit Zone
 @app.put("/api/zones/{zone_id}", tags=["Dashboard"])
 def update_zone_public(
     zone_id: str,
@@ -228,7 +230,7 @@ def update_zone_public(
     """
     return update_zone(zone_id, payload, db)
 
-# 🟢 FIX: Wrapper for frontend Delete Zone
+# FIX: Wrapper for frontend Delete Zone
 @app.delete("/api/zones/{zone_id}", tags=["Dashboard"])
 def delete_zone_public(
     zone_id: str,
@@ -302,12 +304,12 @@ def create_zone(payload: dict = Body(...), db: Session = Depends(get_db)):
                 })
 
         db.commit()
-        print(f"✅ Created Zone {zone_id} with capacity {total}")
+        print(f"Created Zone {zone_id} with capacity {total}")
         return {"success": True, "zoneId": zone_id, "totalCapacity": total, "name": name}
 
     except Exception as e:
         db.rollback()
-        print(f"❌ Zone Creation Failed: {str(e)}")
+        print(f"Zone Creation Failed: {str(e)}")
         raise HTTPException(500, f"Failed to create zone: {str(e)}")
 
 @app.put("/api/admin/zones/{zone_id}", tags=["Admin"])
@@ -349,7 +351,7 @@ def update_zone(
         medium = int(limits.get("medium", 0))
         light = int(limits.get("light", 0))
 
-        # SAFETY CHECK: ❌ Prevent reducing below active vehicles
+        # SAFETY CHECK: Prevent reducing below active vehicles
         if heavy < current_counts.get("heavy", 0) \
            or medium < current_counts.get("medium", 0) \
            or light < current_counts.get("light", 0):
@@ -505,7 +507,7 @@ def register_officer(payload: dict = Body(...), db: Session = Depends(get_db)):
     email = payload.get("email")
     password = payload.get("password")
 
-    # 🔐 Basic validation
+    # Basic validation
     if not name or not police_id or not email or not password:
         raise HTTPException(
             status_code=400,
@@ -513,7 +515,7 @@ def register_officer(payload: dict = Body(...), db: Session = Depends(get_db)):
         )
 
     try:
-        # 🔒 Store password safely (simple hash for now)
+        # Store password safely (simple hash for now)
         hashed_password = db.execute(
             text("SELECT crypt(:p, gen_salt('bf'))"),
             {"p": password}
@@ -657,105 +659,168 @@ def enter_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
 
         if not vehicle:
             raise HTTPException(400, "Vehicle number required for entry")
-        
-        # Determine target zone (automatic or requested)
+
+        # -------------------------------
+        # Select available zone with capacity validation
+        # -------------------------------
         z = db.execute(text("""
-            SELECT * FROM parking_zones
-            WHERE status='ACTIVE'
-              AND current_occupied < total_capacity
-              AND (:zone IS NULL OR zone_id = :zone)
-            ORDER BY created_at ASC
+            SELECT z.*
+            FROM parking_zones z
+            JOIN zone_type_limits zl ON z.zone_id = zl.zone_id
+            JOIN vehicle_types vt ON zl.vehicle_type_id = vt.id
+            WHERE z.status = 'ACTIVE'
+              AND z.current_occupied < z.total_capacity
+              AND zl.current_count < zl.max_vehicles
+              AND vt.type_name = :vtype
+              AND (:zone_filter IS NULL OR z.zone_id = :zone_filter)
+            ORDER BY z.created_at ASC
             LIMIT 1
-        """), {"zone": zone}).mappings().first()
+        """), {"vtype": vtype, "zone_filter": zone}).mappings().first()
 
         if not z:
-            raise HTTPException(400, "Capacity Alert: No available spots in selected zone")
+            raise HTTPException(400, f"Capacity Alert: No available spots for {vtype} vehicles in requested zone(s)")
 
+        # -------------------------------
+        # Get vehicle type ID
+        # -------------------------------
         vt = db.execute(text("""
-            SELECT id FROM vehicle_types WHERE type_name=:t
+            SELECT id FROM vehicle_types WHERE type_name = :t
         """), {"t": vtype}).scalar()
 
-        # Insert vehicle details
+        # -------------------------------
+        # Vehicle UPSERT
+        # -------------------------------
         vehicle_id = db.execute(text("""
-            INSERT INTO vehicles(vehicle_number, vehicle_type_id)
-            VALUES (:n, :t) RETURNING vehicle_id
-        """), {"n": vehicle, "t": vt}).scalar()
+            SELECT vehicle_id
+            FROM vehicles
+            WHERE vehicle_number = :n
+        """), {"n": vehicle}).scalar()
 
+        if not vehicle_id:
+            vehicle_id = db.execute(text("""
+                INSERT INTO vehicles (vehicle_number, vehicle_type_id)
+                VALUES (:n, :t)
+                RETURNING vehicle_id
+            """), {"n": vehicle, "t": vt}).scalar()
+
+        # -------------------------------
+        # ACTIVE TICKET CHECK (IMPORTANT)
+        # -------------------------------
+        active_ticket = db.execute(text("""
+            SELECT ticket_code, zone_id
+            FROM parking_tickets
+            WHERE vehicle_id = :v
+              AND exit_time IS NULL
+            LIMIT 1
+        """), {"v": vehicle_id}).mappings().first()
+
+        if active_ticket:
+            return {
+                "success": False,
+                "message": "Vehicle already inside parking",
+                "ticket": active_ticket["ticket_code"],
+                "zone": active_ticket["zone_id"]
+            }
+
+        # -------------------------------
+        # CREATE NEW TICKET
+        # -------------------------------
         ticket_code = f"TKT-{int(datetime.now().timestamp())}"
 
-        # Create active ticket
         db.execute(text("""
-            INSERT INTO parking_tickets(ticket_code, vehicle_id, zone_id, entry_time, status)
+            INSERT INTO parking_tickets
+            (ticket_code, vehicle_id, zone_id, entry_time, status)
             VALUES (:c, :v, :z, NOW(), 'ACTIVE')
-        """), {"c": ticket_code, "v": vehicle_id, "z": z["zone_id"]})
+        """), {
+            "c": ticket_code,
+            "v": vehicle_id,
+            "z": z["zone_id"]
+        })
 
-        # Update occupancy counters
+        # -------------------------------
+        # Update counters
+        # -------------------------------
         db.execute(text("""
-            UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id=:z
+            UPDATE parking_zones
+            SET current_occupied = current_occupied + 1
+            WHERE zone_id = :z
         """), {"z": z["zone_id"]})
 
         db.execute(text("""
-            UPDATE zone_type_limits SET current_count = current_count + 1
-            WHERE zone_id=:z AND vehicle_type_id=:t
+            UPDATE zone_type_limits
+            SET current_count = current_count + 1
+            WHERE zone_id = :z AND vehicle_type_id = :t
         """), {"z": z["zone_id"], "t": vt})
 
-        db.flush() 
-        trigger_auto_snapshot(db) 
-        db.commit() 
+        db.flush()
+        trigger_auto_snapshot(db)
+        db.commit()
 
-        return {"success": True, "ticket": ticket_code, "zone": z["zone_name"]}
+        return {
+            "success": True,
+            "ticket": ticket_code,
+            "zone": z["zone_name"]
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Entry Error: {str(e)}")
 
 @app.post("/api/exit", tags=["Operations"])
 def exit_vehicle(payload: dict = Body(...), db: Session = Depends(get_db)):
-    """Processes a vehicle exit, frees up space, and triggers a snapshot."""
-    try:
-        ticket_code = payload.get("ticket_code") or payload.get("ticketId")
-        if not ticket_code:
-            raise HTTPException(400, "Valid Ticket code is required for exit")
+    """
+    Processes vehicle exit using ticketId.
+    """
+    ticket_code = payload.get("ticketId") or payload.get("ticket_code")
 
-        ticket = db.execute(text("""
-            SELECT pt.*, v.vehicle_type_id 
-            FROM parking_tickets pt
-            JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
-            WHERE pt.ticket_code = :code AND pt.exit_time IS NULL
-        """), {"code": ticket_code}).mappings().first()
+    if not ticket_code:
+        raise HTTPException(400, "ticketId is required")
 
-        if not ticket:
-            raise HTTPException(404, "Active ticket not found. Vehicle may have already exited.")
+    ticket = db.execute(text("""
+        SELECT pt.*, v.vehicle_type_id
+        FROM parking_tickets pt
+        JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+        WHERE pt.ticket_code = :c
+          AND pt.exit_time IS NULL
+    """), {"c": ticket_code}).mappings().first()
 
-        # Update ticket status
-        db.execute(text("""
-            UPDATE parking_tickets
-            SET exit_time = NOW(), status = 'EXITED'
-            WHERE ticket_code = :code
-        """), {"code": ticket_code})
+    if not ticket:
+        raise HTTPException(404, "Active ticket not found")
 
-        # Free up occupancy counters
-        db.execute(text("""
-            UPDATE parking_zones 
-            SET current_occupied = current_occupied - 1 
-            WHERE zone_id = :z
-        """), {"z": ticket["zone_id"]})
+    # Mark exit
+    db.execute(text("""
+        UPDATE parking_tickets
+        SET exit_time = NOW(), status = 'EXITED'
+        WHERE ticket_code = :c
+    """), {"c": ticket_code})
 
-        db.execute(text("""
-            UPDATE zone_type_limits 
-            SET current_count = current_count - 1
-            WHERE zone_id = :z AND vehicle_type_id = :t
-        """), {"z": ticket["zone_id"], "t": ticket["vehicle_type_id"]})
+    # Reduce zone occupancy
+    db.execute(text("""
+        UPDATE parking_zones
+        SET current_occupied = current_occupied - 1
+        WHERE zone_id = :z
+    """), {"z": ticket["zone_id"]})
 
-        db.flush()
-        trigger_auto_snapshot(db)
-        db.commit()
-        return {"success": True, "message": "Vehicle exited successfully and spot freed"}
+    # Reduce vehicle type count
+    db.execute(text("""
+        UPDATE zone_type_limits
+        SET current_count = current_count - 1
+        WHERE zone_id = :z
+          AND vehicle_type_id = :t
+    """), {
+        "z": ticket["zone_id"],
+        "t": ticket["vehicle_type_id"]
+    })
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(500, f"Exit Error: {str(e)}")
+    db.commit()
 
+    return {
+        "success": True,
+        "message": "Vehicle exited successfully",
+        "ticket": ticket_code
+    }
 # =================================================================
 # REPORTS & ANALYTICS
 # =================================================================
@@ -772,8 +837,8 @@ def get_reports(
             pt.ticket_code       AS ticketid,
             v.vehicle_number     AS vehicle,
             vt.type_name         AS type,
-            z.zone_id            AS zone,
-            pt.entry_time         AS entrytime,
+            z.zone_name          AS zone,
+            pt.entry_time        AS entrytime,
             pt.exit_time          AS exittime
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
@@ -814,7 +879,7 @@ def get_reports(
 def get_predictions(db: Session = Depends(get_db)):
 
     # -------------------------------------------------
-    # 1️⃣ Past 7 days peak occupancy (from snapshots)
+    # 1 Past 7 days peak occupancy (from snapshots)
     # -------------------------------------------------
     trend_rows = db.execute(text("""
         SELECT
@@ -840,18 +905,18 @@ def get_predictions(db: Session = Depends(get_db)):
         })
 
     # -------------------------------------------------
-    # 2️⃣ Trend direction (increase / decrease)
+    # 2 Trend direction (increase / decrease)
     # -------------------------------------------------
     if len(past7) >= 2:
         trend_delta = past7[-1]["occupancy"] - past7[0]["occupancy"]
     else:
         trend_delta = 0
 
-    # Normalize trend to 0 → 1 range
+    # Normalize trend to 0 -> 1 range
     trend_factor = min(max(trend_delta / 20, 0), 1)
 
     # -------------------------------------------------
-    # 3️⃣ Live occupancy pressure
+    # 3. Live occupancy pressure
     # -------------------------------------------------
     live_occupied = db.execute(text("""
         SELECT COALESCE(SUM(current_occupied), 0)
@@ -862,7 +927,7 @@ def get_predictions(db: Session = Depends(get_db)):
     live_ratio = live_occupied / total_capacity
 
     # -------------------------------------------------
-    # 4️⃣ Historical peak pressure
+    # 4. Historical peak pressure
     # -------------------------------------------------
     peak_ratio = max(
         (d["occupancy"] / 100 for d in past7),
@@ -870,7 +935,7 @@ def get_predictions(db: Session = Depends(get_db)):
     )
 
     # -------------------------------------------------
-    # 5️⃣ FINAL PROBABILITY (Weighted Model)
+    # 5. FINAL PROBABILITY (Weighted Model)
     # -------------------------------------------------
     probability = round(
         (peak_ratio * 50) +      # history impact
@@ -881,7 +946,7 @@ def get_predictions(db: Session = Depends(get_db)):
     probability = min(max(probability, 0), 100)
 
     # -------------------------------------------------
-    # 6️⃣ Hourly curve for tomorrow (frontend graph)
+    # 6. Hourly curve for tomorrow (frontend graph)
     # -------------------------------------------------
     hourly = []
     base = probability * 0.4
@@ -916,7 +981,7 @@ def get_predictions(db: Session = Depends(get_db)):
         })
 
     # -------------------------------------------------
-    # ✅ FINAL RESPONSE (SINGLE RETURN)
+    # FINAL RESPONSE (SINGLE RETURN)
     # -------------------------------------------------
     return {
         "tomorrow": {
@@ -975,6 +1040,149 @@ def create_snapshot(db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(500, str(e))
 
+@app.post("/api/snapshot/activate/{snapshot_id}", tags=["Diagnostics"])
+def restore_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
+    """
+    Time Travel: Restores the system to a previous state.
+    1. Auto-saves current state (Safety Snapshot).
+    2. Wipes all active tickets.
+    3. Restores tickets from the selected snapshot.
+    """
+    try:
+        # 1. Fetch the requested snapshot
+        target_snap = db.execute(text("""
+            SELECT data FROM snapshots WHERE id = :id
+        """), {"id": snapshot_id}).mappings().first()
+
+        if not target_snap:
+            raise HTTPException(404, "Snapshot not found")
+
+        # 2. Parse the target data (Vehicle List)
+        vehicles_to_restore = json.loads(target_snap["data"])
+
+        # 3. SAFETY: Save current state before wiping
+        print("Creating safety snapshot before restore...")
+        trigger_auto_snapshot(db)
+
+        # 4. WIPE LIVE STATE
+        print("Wiping live parking data...")
+        
+        # Mark all active tickets as 'SYSTEM_RESTORE_CLEARED' (Soft Wipe) or Delete
+        # Here we soft-delete by setting exit_time = NOW to avoid losing history, 
+        # or we can hard delete if we want a true "Time Travel" feel.
+        # Given the "System Reset" requirement, we'll DELETE active tickets to clean the slate.
+        db.execute(text("DELETE FROM parking_tickets WHERE exit_time IS NULL"))
+        
+        # Reset Zone Counters
+        db.execute(text("UPDATE parking_zones SET current_occupied = 0"))
+        db.execute(text("UPDATE zone_type_limits SET current_count = 0"))
+
+        # 5. REACTIVATE ZONES (If snapshot contains vehicles in deleted zones)
+        # We ensure all zones referred to in the snapshot are ACTIVE before continuing.
+        snapshot_zone_ids = list(set(v["zone"] for v in vehicles_to_restore))
+        if snapshot_zone_ids:
+            print(f"Ensuring status=ACTIVE for snapshot zones: {snapshot_zone_ids}")
+            db.execute(text("""
+                UPDATE parking_zones 
+                SET status = 'ACTIVE' 
+                WHERE zone_id = ANY(:ids)
+            """), {"ids": snapshot_zone_ids})
+
+        # 6. RESTORE VEHICLES
+        print(f"Restoring {len(vehicles_to_restore)} vehicles...")
+        
+        # Pre-fetch fallback zone and current active set with names for smart mapping
+        active_zones_rows = db.execute(text("SELECT zone_id, zone_name FROM parking_zones WHERE status = 'ACTIVE'")).fetchall()
+        active_zone_ids = {r.zone_id for r in active_zones_rows}
+        name_to_id = {r.zone_name: r.zone_id for r in active_zones_rows}
+        fallback_zone_id = active_zones_rows[0].zone_id if active_zones_rows else None
+        
+        restored_count = 0
+        processed_ids = set() # Prevent duplicate entries using internal IDs
+        
+        for v in vehicles_to_restore:
+            # v = { "plate": "...", "zone": "...", "zone_name": "...", "timeIn": "...", "type": "..." }
+            
+            # A. Resolve Vehicle and Type
+            plate_cleaned = v["plate"].strip().upper()
+            
+            v_type_id = db.execute(text("SELECT id FROM vehicle_types WHERE type_name = :t"), 
+                                 {"t": v["type"]}).scalar()
+            
+            if not v_type_id:
+                v_type_id = db.execute(text("SELECT id FROM vehicle_types LIMIT 1")).scalar()
+
+            vehicle_id = db.execute(text("SELECT vehicle_id FROM vehicles WHERE vehicle_number = :n"), 
+                                  {"n": plate_cleaned}).scalar()
+
+            if not vehicle_id:
+                vehicle_id = db.execute(text("""
+                    INSERT INTO vehicles (vehicle_number, vehicle_type_id) 
+                    VALUES (:n, :t) RETURNING vehicle_id
+                """), {"n": plate_cleaned, "t": v_type_id}).scalar()
+
+            # B. ID-Based Deduplication (Final Safety)
+            if vehicle_id in processed_ids:
+                print(f"Skipping duplicate vehicle {plate_cleaned} (ID: {vehicle_id}) in snapshot")
+                continue
+            processed_ids.add(vehicle_id)
+
+
+            # C. Smart Zone Mapping
+            # Priority 1: Map by Name (if available in snapshot)
+            # Priority 2: Map by ID (if active)
+            # Priority 3: Fallback
+            target_zone = None
+            snap_zone_name = v.get("zone_name")
+            snap_zone_id = v.get("zone")
+
+            if snap_zone_name and snap_zone_name in name_to_id:
+                target_zone = name_to_id[snap_zone_name]
+            elif snap_zone_id in active_zone_ids:
+                target_zone = snap_zone_id
+            
+            if not target_zone:
+                print(f"Warning: Could not map vehicle {v['plate']} (Zone: {snap_zone_id}/{snap_zone_name}). Using fallback.")
+                target_zone = fallback_zone_id
+
+            if not target_zone:
+                continue # Hard failure: no zones active in system
+
+            # D. Insert Active Ticket (Force previous entry time)
+            ticket_code = f"RES-{int(datetime.now().timestamp())}-{restored_count}"
+            
+            db.execute(text("""
+                INSERT INTO parking_tickets (ticket_code, vehicle_id, zone_id, entry_time, status)
+                VALUES (:code, :vid, :zid, :time, 'RESTORED')
+            """), {
+                "code": ticket_code,
+                "vid": vehicle_id,
+                "zid": target_zone,
+                "time": v["timeIn"]
+            })
+
+            # D. Increment Counters
+            db.execute(text("""
+                UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id = :z
+            """), {"z": target_zone})
+
+            db.execute(text("""
+                UPDATE zone_type_limits 
+                SET current_count = current_count + 1 
+                WHERE zone_id = :z AND vehicle_type_id = :t
+            """), {"z": target_zone, "t": v_type_id})
+
+            restored_count += 1
+
+        db.commit()
+        print(f"Restore Complete. {restored_count} vehicles active.")
+        return {"success": True, "message": f"Restored {restored_count} vehicles from snapshot #{snapshot_id}"}
+
+    except Exception as e:
+        db.rollback()
+        print(f"Restore Failed: {str(e)}")
+        raise HTTPException(500, f"Restore failed: {str(e)}")
+
 # =================================================================
 # STATIC FRONTEND DELIVERY (SPA SUPPORT)
 # =================================================================
@@ -982,7 +1190,7 @@ BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "dist" / "public"
 
 if PUBLIC_DIR.exists():
-    print(f"📁 Serving static files from: {PUBLIC_DIR}")
+    print(f"Serving static files from: {PUBLIC_DIR}")
     app.mount("/assets", StaticFiles(directory=PUBLIC_DIR / "assets"), name="assets")
 
     @app.get("/", include_in_schema=False)
@@ -998,7 +1206,7 @@ if PUBLIC_DIR.exists():
             raise HTTPException(status_code=404, detail="API endpoint not found")
         return FileResponse(PUBLIC_DIR / "index.html")
 else:
-    print("⚠️ Static files directory 'dist/public' not found. API-only mode active.")
+    print("Static files directory 'dist/public' not found. API-only mode active.")
 
 # Final note for developer maintenance:
 # This main.py acts as the central hub. All SQL logic is kept in text() blocks 

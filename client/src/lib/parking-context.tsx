@@ -80,24 +80,10 @@ type ParkingContextType = {
 
 const ParkingContext = createContext<ParkingContextType | undefined>(undefined);
 
-const ZONES_COUNT = 20;
-const ZONE_CAPACITY = 50;
-
-const INITIAL_ZONES: ParkingZone[] = Array.from({ length: ZONES_COUNT }, (_, i) => {
-  const heavyLimit = Math.floor(ZONE_CAPACITY * 0.2);
-  const mediumLimit = Math.floor(ZONE_CAPACITY * 0.3);
-  const lightLimit = ZONE_CAPACITY - heavyLimit - mediumLimit;
-
-  return {
-    id: `Z${i + 1}`,
-    name: `Nilakkal Parking Zone ${i + 1}`,
-    capacity: ZONE_CAPACITY,
-    occupied: 0,
-    vehicles: [],
-    limits: { heavy: heavyLimit, medium: mediumLimit, light: lightLimit },
-    stats: { heavy: 0, medium: 0, light: 0 }
-  };
-});
+// Hardcoded zones removed. Application now fully dynamic.
+// const ZONES_COUNT = 20;
+// const ZONE_CAPACITY = 50;
+// const INITIAL_ZONES = ...
 
 export function ParkingProvider({ children }: { children: React.ReactNode }) {
   const [zones, setZones] = useState<ParkingZone[]>([]);
@@ -112,7 +98,7 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
       const data = await apiGet<ParkingZone[]>("/api/zones");
       const normalized = data.map(z => ({
         ...z,
-        vehicles: [], 
+        vehicles: [],
         stats: z.stats || { heavy: 0, medium: 0, light: 0 }
       }));
       setZones(normalized);
@@ -127,25 +113,25 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminUser, setAdminUser] = useState<{
-  id: number;
-  name: string;
-  policeId: string;
-  email: string;
-  role: string;
-} | null>(null);
+    id: number;
+    name: string;
+    policeId: string;
+    email: string;
+    role: string;
+  } | null>(null);
 
 
   // Persistence logic
   useEffect(() => {
     const interval = setInterval(() => {
-       const payload = makeSnapshotFromState(zonesRef.current);
-       saveLatestSnapshot(payload).catch(e => console.error("Auto-save failed", e));
-    }, 3 * 60 * 1000); 
+      const payload = makeSnapshotFromState(zonesRef.current);
+      saveLatestSnapshot(payload).catch(e => console.error("Auto-save failed", e));
+    }, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
   const makeSnapshotFromState = (currentZones: ParkingZone[]) => {
-    const records: VehicleRecord[] = currentZones.flatMap(z => 
+    const records: VehicleRecord[] = currentZones.flatMap(z =>
       z.vehicles.map(v => ({
         plate: v.number,
         zone: z.name,
@@ -161,44 +147,44 @@ export function ParkingProvider({ children }: { children: React.ReactNode }) {
   };
 
   type AdminLoginResponse = {
-  success: boolean;
-  user: {
-    id: number;
-    name: string;
-    policeId: string;
-    email: string;
-    role: string;
+    success: boolean;
+    user: {
+      id: number;
+      name: string;
+      policeId: string;
+      email: string;
+      role: string;
+    };
   };
-};
 
-const loginAdmin = async (
-  email: string,
-  password: string
-): Promise<boolean> => {
-  try {
-    const res = await apiPost<AdminLoginResponse>("/api/admin/login", {
-      email,
-      password,
-    });
+  const loginAdmin = async (
+    email: string,
+    password: string
+  ): Promise<boolean> => {
+    try {
+      const res = await apiPost<AdminLoginResponse>("/api/admin/login", {
+        email,
+        password,
+      });
 
-    if (!res.success) return false;
+      if (!res.success) return false;
 
-    setAdminUser(res.user);
-    setIsAdmin(true);
-    return true;
-  } catch (err) {
-    console.error("❌ Admin login failed", err);
-    return false;
-  }
-};
-
+      setAdminUser(res.user);
+      setIsAdmin(true);
+      return true;
+    } catch (err) {
+      console.error("❌ Admin login failed", err);
+      return false;
+    }
+  };
 
 
-  
+
+
   const logoutAdmin = () => {
-  setIsAdmin(false);
-  setAdminUser(null);
-};
+    setIsAdmin(false);
+    setAdminUser(null);
+  };
 
 
   // --- RECTIFIED ADMIN ACTIONS WITH API SYNC ---
@@ -217,38 +203,38 @@ const loginAdmin = async (
   };
 
   const updateZone = async (
-  id: string,
-  data: {
-    name: string;
-    limits: {
-      heavy: number;
-      medium: number;
-      light: number;
-    };
-  }
-) => {
-  try {
-    await apiPut(`/api/zones/${id}`, {
-      name: data.name,
-      limits: data.limits
-    });
-    await refreshData();
-  } catch (err) {
-    console.error("❌ Failed to update zone", err);
-    throw err;
-  }
-};
+    id: string,
+    data: {
+      name: string;
+      limits: {
+        heavy: number;
+        medium: number;
+        light: number;
+      };
+    }
+  ) => {
+    try {
+      await apiPut(`/api/zones/${id}`, {
+        name: data.name,
+        limits: data.limits
+      });
+      await refreshData();
+    } catch (err) {
+      console.error("❌ Failed to update zone", err);
+      throw err;
+    }
+  };
 
 
   const deleteZone = async (id: string) => {
-  try {
-    await apiDelete(`/api/zones/${id}`);   // ✅ DELETE
-    await refreshData();
-  } catch (err) {
-    console.error("❌ Failed to delete zone", err);
-    throw err;
-  }
-};
+    try {
+      await apiDelete(`/api/zones/${id}`);   // ✅ DELETE
+      await refreshData();
+    } catch (err) {
+      console.error("❌ Failed to delete zone", err);
+      throw err;
+    }
+  };
 
 
   // --- END OF RECTIFIED ACTIONS ---
@@ -285,7 +271,16 @@ const loginAdmin = async (
   const totalOccupied = zones.reduce((acc, z) => acc + z.occupied, 0);
 
   const restoreData = (records: any[]) => {
-    const newZones: ParkingZone[] = INITIAL_ZONES.map(z => ({
+    // If records are empty or we are in Server-Side Restore mode, 
+    // we should just fetch the latest state from the backend.
+    if (!records || records.length === 0) {
+      refreshData();
+      return;
+    }
+
+    // CLIENT-SIDE RESTORE / OFFLINE MODE (Legacy Fallback)
+    // Use current zones state as the base, do NOT invent new zones.
+    const newZones: ParkingZone[] = zones.map(z => ({
       ...z,
       occupied: 0,
       vehicles: [],
@@ -293,22 +288,32 @@ const loginAdmin = async (
     }));
 
     records.forEach(rec => {
-      if (rec.timeOut) return;
-      let zone = newZones.find(z => z.name === rec.zone || z.id === rec.zone); 
-      if (!zone) zone = newZones[0]; 
+      // Find the matching zone by ID or Name from the existing dynamic zones
+      let zone = newZones.find(z => z.name === rec.zone || z.id === rec.zone);
+
+      // If zone doesn't exist in the new dynamic system, SKIPPING instead of forcing to Zone 1 
+      // (Safety choice to avoid overflow). Or we could fallback to the first active zone.
+      if (!zone) {
+        if (newZones.length > 0) zone = newZones[0];
+        else return; // No zones at all? nothing to restore to.
+      }
+
+      // Safe access: ensure zone is defined before proceeding
+      if (!zone) return;
 
       const vehicleType: VehicleType = ['heavy', 'medium', 'light'].includes(rec.type) ? rec.type : 'light';
-      
-      if (zone.occupied < zone.capacity && zone.stats[vehicleType] < zone.limits[vehicleType]) {
+
+      // Only add if there is capacity
+      if (zone.occupied < zone.capacity) {
         zone.vehicles.push({
           number: rec.plate,
           entryTime: new Date(rec.timeIn),
           zoneId: zone.id,
-          ticketId: `RES-${Date.now()}`,
+          ticketId: `RES-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
           type: vehicleType
         });
         zone.occupied++;
-        zone.stats[vehicleType]++; 
+        zone.stats[vehicleType]++;
       }
     });
 
@@ -316,21 +321,21 @@ const loginAdmin = async (
   };
 
   return (
-    <ParkingContext.Provider value={{ 
-  zones,
-  refreshData,
-  enterVehicle,
-  totalCapacity,
-  totalOccupied,
-  isAdmin,
-  adminUser,        // ✅ now available everywhere
-  loginAdmin,
-  logoutAdmin,
-  addZone,
-  updateZone,
-  deleteZone,
-  restoreData
-}}>
+    <ParkingContext.Provider value={{
+      zones,
+      refreshData,
+      enterVehicle,
+      totalCapacity,
+      totalOccupied,
+      isAdmin,
+      adminUser,        // ✅ now available everywhere
+      loginAdmin,
+      logoutAdmin,
+      addZone,
+      updateZone,
+      deleteZone,
+      restoreData
+    }}>
       {children}
     </ParkingContext.Provider>
   );
