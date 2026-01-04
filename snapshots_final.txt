@@ -1,0 +1,8 @@
+﻿
+--- ALL AVAILABLE SNAPSHOTS ---
+Found 4 snapshot(s):
+
+   ID: 1 | Time: 2026-01-04 12:42:04.564473 | Records: 1
+   ID: 2 | Time: 2026-01-04 12:42:50.563922 | Records: 2
+   ID: 3 | Time: 2026-01-04 12:43:49.090294 | Records: 3
+   ID: 4 | Time: 2026-01-04 12:45:23.555120 | Records: 2

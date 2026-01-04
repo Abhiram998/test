@@ -25,8 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LabelList
 } from 'recharts';
 
@@ -59,9 +59,28 @@ type VehicleSearchResult = {
   vehicle: string;
   ticketId: string;
   status: "INSIDE" | "EXITED";
+  type: string;
   zone: string;
   entryTime?: string;
   exitTime?: string;
+  message?: string;
+};
+
+// Helper for duration
+const getDuration = (start?: string) => {
+  if (!start) return "-";
+  const diff = new Date().getTime() - new Date(start).getTime();
+  if (diff < 0) return "Just now";
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(mins / 60);
+  if (hours > 0) return `${hours}h ${mins % 60}m`;
+  return `${mins} mins`;
+};
+
+// Helper for time
+const formatTime = (ts?: string) => {
+  if (!ts) return "-";
+  return new Date(ts).toLocaleTimeString("en-US", { hour: '2-digit', minute: '2-digit' });
 };
 
 
@@ -77,15 +96,16 @@ export default function Home() {
   const totalOccupied = zones.reduce((sum, z) => sum + z.occupied, 0);
 
   const { toast } = useToast();
-  
+
   // Calculate vacancy
   const totalVacancy = totalCapacity - totalOccupied;
-  
+
   // State for interactive graph
   const [hoveredZone, setHoveredZone] = useState<Zone | null>(null);
 
   // Ticket Generation State
   const [isTicketOpen, setIsTicketOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false); // New State
   const [ticketData, setTicketData] = useState({
     vehicleNumber: "",
     zoneId: "",
@@ -132,11 +152,11 @@ export default function Home() {
     }
 
     try {
-       await apiPost("/api/enter", {
-       vehicle: ticketData.vehicleNumber,
-       type: ticketData.type,
-       zone: ticketData.zoneId || undefined,
-       slot: ticketData.slot || undefined,
+      await apiPost("/api/enter", {
+        vehicle: ticketData.vehicleNumber,
+        type: ticketData.type,
+        zone: ticketData.zoneId || undefined,
+        slot: ticketData.slot || undefined,
       });
 
       toast({
@@ -159,34 +179,34 @@ export default function Home() {
 
 
   // Chart Data Preparation
-const barChartData = zones
-  .filter(zone => zone.occupied > 0) // ✅ HIDE EMPTY ZONES
-  .map((zone, index) => {
-    let heavyPct = 0;
-    let mediumPct = 0;
-    let lightPct = 0;
+  const barChartData = zones
+    .filter(zone => zone.occupied > 0) // ✅ HIDE EMPTY ZONES
+    .map((zone, index) => {
+      let heavyPct = 0;
+      let mediumPct = 0;
+      let lightPct = 0;
 
-    if (zone.limits) {
-      heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
-      mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
-      lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
-    } else {
-      heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
-      mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
-      lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
-    }
+      if (zone.limits) {
+        heavyPct = zone.limits.heavy > 0 ? (zone.stats.heavy / zone.limits.heavy) * 100 : 0;
+        mediumPct = zone.limits.medium > 0 ? (zone.stats.medium / zone.limits.medium) * 100 : 0;
+        lightPct = zone.limits.light > 0 ? (zone.stats.light / zone.limits.light) * 100 : 0;
+      } else {
+        heavyPct = zone.capacity > 0 ? (zone.stats.heavy / zone.capacity) * 100 : 0;
+        mediumPct = zone.capacity > 0 ? (zone.stats.medium / zone.capacity) * 100 : 0;
+        lightPct = zone.capacity > 0 ? (zone.stats.light / zone.capacity) * 100 : 0;
+      }
 
-    return {
-      name: `P${index + 1}`,
-      Heavy: heavyPct,
-      Medium: mediumPct,
-      Light: lightPct,
-      occupied: zone.occupied,
-      capacity: zone.capacity,
-      limits: zone.limits,
-      originalZone: zone
-    };
-  });
+      return {
+        name: `P${index + 1}`,
+        Heavy: heavyPct,
+        Medium: mediumPct,
+        Light: lightPct,
+        occupied: zone.occupied,
+        capacity: zone.capacity,
+        limits: zone.limits,
+        originalZone: zone
+      };
+    });
 
   const activeStats = hoveredZone ? hoveredZone.stats : {
     heavy: zones.reduce((acc, z) => acc + z.stats.heavy, 0),
@@ -214,9 +234,10 @@ const barChartData = zones
 
     try {
       const result = await apiGet<any>(
-  `/api/search?q=${encodeURIComponent(searchQuery)}`
-);
+        `/api/search?q=${encodeURIComponent(searchQuery)}`
+      );
       setSearchResult(result);
+      setIsSearchOpen(true);
     } catch {
       setSearchResult(null);
       toast({
@@ -248,10 +269,10 @@ const barChartData = zones
           <h1 className="text-xl font-bold text-slate-800">Dashboard Parking Zone</h1>
         </div>
         <div className="flex items-center gap-4">
-           <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
-           <Button variant="ghost" size="icon" className="md:hidden">
-             <MoreHorizontal />
-           </Button>
+          <img src={logo} alt="Kerala Police Logo" className="h-20 w-auto object-contain" />
+          <Button variant="ghost" size="icon" className="md:hidden">
+            <MoreHorizontal />
+          </Button>
         </div>
       </div>
 
@@ -260,63 +281,63 @@ const barChartData = zones
         <TopCard title="Vacancy" value={totalVacancy} dark={true} isVacancy={true} />
         <TopCard title="Occupancy" value={totalOccupied} />
         <TopCard title="Total Capacity" value={totalCapacity} />
-        
-        <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 h-full flex items-center gap-3">
-           <div className="w-[70px] h-[70px] relative flex-shrink-0">
-             <ResponsiveContainer width="100%" height="100%">
-               <PieChart>
-                 <Pie
-                   data={pieData}
-                   innerRadius={25}
-                   outerRadius={35}
-                   paddingAngle={0}
-                   dataKey="value"
-                   stroke="none"
-                 >
-                   {pieData.map((entry, index) => (
-                     <Cell key={`cell-${index}`} fill={entry.color} />
-                   ))}
-                 </Pie>
-               </PieChart>
-             </ResponsiveContainer>
-             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <span className="text-xs font-bold text-slate-700">{activeOccupancyRate}%</span>
-             </div>
-           </div>
 
-           <div className="flex-1 flex flex-col justify-center gap-1">
-             <div className="flex justify-between items-center border-b border-slate-50 pb-1 mb-1">
-               <span className="font-medium text-slate-500 text-xs">Composition</span>
-               <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">
-                 {hoveredZone ? `P${zones.findIndex(z => z.id === hoveredZone.id) + 1}`: "Total"}
-               </span>
-             </div>
-             
-             <div className="space-y-0.5">
-                {pieData.map((item, index) => (
-                   <div key={index} className="flex items-center justify-between text-[10px]">
-                      <div className="flex items-center gap-1">
-                         <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
-                         <span className="text-slate-500">{item.name}</span>
-                      </div>
-                      <span className="font-bold text-slate-700">{item.value}</span>
-                   </div>
-                ))}
-             </div>
-           </div>
+        <div className="rounded-xl p-3 shadow-sm border bg-white border-slate-100 h-full flex items-center gap-3">
+          <div className="w-[70px] h-[70px] relative flex-shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  innerRadius={25}
+                  outerRadius={35}
+                  paddingAngle={0}
+                  dataKey="value"
+                  stroke="none"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="text-xs font-bold text-slate-700">{activeOccupancyRate}%</span>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col justify-center gap-1">
+            <div className="flex justify-between items-center border-b border-slate-50 pb-1 mb-1">
+              <span className="font-medium text-slate-500 text-xs">Composition</span>
+              <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">
+                {hoveredZone ? `P${zones.findIndex(z => z.id === hoveredZone.id) + 1}` : "Total"}
+              </span>
+            </div>
+
+            <div className="space-y-0.5">
+              {pieData.map((item, index) => (
+                <div key={index} className="flex items-center justify-between text-[10px]">
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-500">{item.name}</span>
+                  </div>
+                  <span className="font-bold text-slate-700">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 gap-6 h-full mt-2">
         <div className="space-y-6">
-          
+
           {/* Bar Chart Section */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-4">
                 <h3 className="font-bold text-slate-700">Live Parking Zone Status (Occupancy %)</h3>
-                
+
                 {/* 🔐 FEATURE GUARD 1: Generate Ticket (Police Only) */}
                 {isAdmin && (
                   <Button size="sm" onClick={() => setIsTicketOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
@@ -325,26 +346,26 @@ const barChartData = zones
                 )}
               </div>
               <div className="hidden md:flex items-center gap-6">
-                 <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
-                    <span className="text-xs text-slate-500">Heavy</span>
-                 </div>
-                 <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-[#f59e0b] rounded-sm"></div>
-                    <span className="text-xs text-slate-500">Medium</span>
-                 </div>
-                 <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-[#3b82f6] rounded-sm"></div>
-                    <span className="text-xs text-slate-500">Light</span>
-                 </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-[#1e293b] rounded-sm"></div>
+                  <span className="text-xs text-slate-500">Heavy</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-[#f59e0b] rounded-sm"></div>
+                  <span className="text-xs text-slate-500">Medium</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-[#3b82f6] rounded-sm"></div>
+                  <span className="text-xs text-slate-500">Light</span>
+                </div>
               </div>
             </div>
-            
+
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart 
-                  data={barChartData} 
-                  barSize={24} 
+                <BarChart
+                  data={barChartData}
+                  barSize={24}
                   margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
                   onMouseMove={(state: any) => {
                     if (state.activePayload) {
@@ -356,23 +377,23 @@ const barChartData = zones
                   }}
                 >
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 13, fontWeight: 500}} 
-                    dy={10} 
-                    interval={0} 
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }}
+                    dy={10}
+                    interval={0}
                   />
-                  <YAxis 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 12}} 
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#64748b', fontSize: 12 }}
                     unit="%"
-                    domain={[0, 100]} 
+                    domain={[0, 100]}
                     allowDataOverflow={true}
                   />
-                  <Tooltip 
+                  <Tooltip
                     cursor={{ fill: '#f8fafc' }}
                     content={({ active, payload, label }) => {
                       if (active && payload && payload.length) {
@@ -432,66 +453,39 @@ const barChartData = zones
 
           {/* Bottom Section: Live Zone Overview & Search */}
           <div className="space-y-4">
-             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                   <Activity className="w-5 h-5 text-orange-500" />
-                   <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-orange-500" />
+                <h3 className="font-bold text-slate-700">Live Parking Zone Overview</h3>
+              </div>
+
+              {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
+              {isAdmin && (
+                <div className="flex items-center gap-3">
+                  <form onSubmit={handleSearch} className="flex gap-2">
+                    <Input
+                      placeholder="Find Vehicle..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="bg-white w-[180px] h-9 text-sm"
+                    />
+                    <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3">
+                      <Search className="w-3.5 h-3.5" />
+                    </Button>
+                  </form>
                 </div>
+              )}
+            </div>
 
-                {/* 🔐 FEATURE GUARD 2: Search Widget (Police Only) */}
-                {isAdmin && (
-                   <div className="flex items-center gap-3">
-                      {searchResult && (
-  <div
-    className={`px-3 py-1.5 rounded-md text-xs border flex items-center gap-2
-      ${
-        searchResult.status === "INSIDE"
-          ? "bg-green-50 text-green-700 border-green-100"
-          : "bg-slate-50 text-slate-600 border-slate-200"
-      }`}
-  >
-    <span className="font-bold">{searchResult.vehicle}</span>
-    <span>
-      {searchResult.status === "INSIDE"
-        ? "inside"
-        : "exited from"}{" "}
-      {searchResult.zone}
-    </span>
-
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-4 w-4 ml-1 hover:bg-slate-200 rounded-full"
-      onClick={() => setSearchResult(null)}
-    >
-      ×
-    </Button>
-  </div>
-)}
-                      <form onSubmit={handleSearch} className="flex gap-2">
-                          <Input 
-                              placeholder="Find Vehicle..." 
-                              value={searchQuery}
-                              onChange={(e) => setSearchQuery(e.target.value)}
-                              className="bg-white w-[180px] h-9 text-sm"
-                          />
-                          <Button type="submit" size="sm" className="bg-slate-900 text-white h-9 px-3">
-                            <Search className="w-3.5 h-3.5" />
-                          </Button>
-                      </form>
-                   </div>
-                )}
-             </div>
-             
-             <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
-  {zones.map((zone, index) => (
-    <ZoneCard
-      key={zone.id}
-      zone={zone}              // ✅ backend ID untouched
-      displayIndex={index + 1} // ✅ UI-only numbering
-    />
-  ))}
-</div>
+            <div className="max-h-[500px] overflow-y-auto pr-2 grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-2">
+              {zones.map((zone, index) => (
+                <ZoneCard
+                  key={zone.id}
+                  zone={zone}              // ✅ backend ID untouched
+                  displayIndex={index + 1} // ✅ UI-only numbering
+                />
+              ))}
+            </div>
           </div>
 
         </div>
@@ -500,8 +494,8 @@ const barChartData = zones
       {/* 🔐 FEATURE GUARD 3: Ticket Dialog (Police Only) */}
       {isAdmin && (
         <Dialog open={isTicketOpen} onOpenChange={setIsTicketOpen} modal={false}>
-          <DialogContent 
-            hideOverlay 
+          <DialogContent
+            hideOverlay
             className="sm:max-w-[425px] fixed top-4 right-4 left-auto translate-x-0 translate-y-0"
           >
             <DialogHeader>
@@ -550,6 +544,75 @@ const barChartData = zones
           </DialogContent>
         </Dialog>
       )}
-    </div>
+
+      {/* 🔐 SEARCH RESULTS DIALOG */}
+      <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
+        <DialogContent className="sm:max-w-[500px] p-0 overflow-hidden bg-white border border-slate-200">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-slate-800">Find Vehicle</h2>
+            </div>
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-white border-slate-200"
+              placeholder="Enter vehicle number..."
+            />
+          </div>
+
+          {searchResult && (
+            <div className="p-6 bg-white">
+              <div className="flex items-center justify-between mb-6">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Status</span>
+                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${searchResult.status === 'INSIDE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${searchResult.status === 'INSIDE' ? 'bg-green-600' : 'bg-red-600'}`}></div>
+                  {searchResult.status === 'INSIDE' ? 'PARKED' : 'EXITED'}
+                </div>
+              </div>
+
+              <div className="mb-8">
+                <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Vehicle Number</div>
+                <div className="text-2xl font-black text-slate-900 font-mono tracking-tight">{searchResult.vehicle}</div>
+                <div className="flex items-center gap-2 mt-2 text-xs font-semibold text-slate-600">
+                  <Ticket className="w-3.5 h-3.5" />
+                  {searchResult.type || 'UNKNOWN'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Parking Zone</div>
+                  <div className="text-sm font-bold text-slate-800">{searchResult.zone}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Slot Number</div>
+                  <div className="text-sm font-bold text-slate-800">N/A</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">Time In</div>
+                  <div className="text-sm font-bold text-slate-800">{formatTime(searchResult.entryTime)}</div>
+                  <div className="text-[10px] text-slate-400">{searchResult.entryTime ? new Date(searchResult.entryTime).toLocaleDateString() : ''}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase mb-1">
+                    {searchResult.status === 'INSIDE' ? 'Duration' : 'Time Out'}
+                  </div>
+                  <div className={`text-sm font-bold ${searchResult.status === 'INSIDE' ? 'text-amber-600' : 'text-slate-800'}`}>
+                    {searchResult.status === 'INSIDE'
+                      ? getDuration(searchResult.entryTime)
+                      : formatTime(searchResult.exitTime)}
+                  </div>
+                  {searchResult.status === 'EXITED' && (
+                    <div className="text-[10px] text-slate-400">
+                      {searchResult.exitTime ? new Date(searchResult.exitTime).toLocaleDateString() : ''}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div >
   );
 };

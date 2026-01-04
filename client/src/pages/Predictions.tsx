@@ -1,8 +1,9 @@
-import { ArrowLeft, Calendar, TrendingUp } from "lucide-react";
+import { ArrowLeft, TrendingUp, Calendar, Info } from "lucide-react";
 import { Link } from "wouter";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   ResponsiveContainer,
   BarChart,
@@ -29,6 +30,11 @@ type ZonePrediction = {
   probability: number;
 };
 
+type HourlyData = {
+  time: string;
+  probability: number;
+};
+
 /* =========================
    COMPONENT
 ========================= */
@@ -38,9 +44,7 @@ export default function Predictions() {
   const [tomorrowProbability, setTomorrowProbability] = useState<number>(0);
   const [zonePredictions, setZonePredictions] = useState<ZonePrediction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hourlyData, setHourlyData] = useState<
-  { time: string; probability: number }[]
->([]);
+  const [hourlyData, setHourlyData] = useState<HourlyData[]>([]);
 
   /* =========================
      FETCH DATA
@@ -64,122 +68,144 @@ export default function Predictions() {
       .finally(() => setLoading(false));
   }, []);
 
-    /* =========================
-     SORT ZONES NUMERICALLY
+  /* =========================
+     COMPUTED METRICS
   ========================= */
 
-  const sortedZones = [...zonePredictions].sort(
-    (a, b) =>
-      parseInt(a.zone.replace("Z", "")) -
-      parseInt(b.zone.replace("Z", ""))
-  );
+  const sortedZones = useMemo(() => {
+    return [...zonePredictions].sort(
+      (a, b) => parseInt(a.zone.replace("Z", "")) - parseInt(b.zone.replace("Z", ""))
+    );
+  }, [zonePredictions]);
+
+  // Gradient helpers for card - BLUE THEME
+  const getGradient = (prob: number) => {
+    if (prob > 75) return "from-red-600 to-rose-600";
+    if (prob > 40) return "from-amber-500 to-orange-500";
+    return "from-blue-600 to-indigo-600"; // Changed to Blue
+  };
+
+  const statusText = useMemo(() => {
+    if (tomorrowProbability > 75) return "High Congestion Expected";
+    if (tomorrowProbability > 40) return "Moderate Traffic Expected";
+    return "Low Congestion Expected";
+  }, [tomorrowProbability]);
 
   /* =========================
      UI
   ========================= */
-    if (loading) {
+  if (loading) {
     return (
-      <div className="h-[60vh] flex items-center justify-center text-muted-foreground">
-        Loading predictions…
+      <div className="h-[60vh] flex flex-col items-center justify-center text-muted-foreground gap-2">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p>Loading forecast...</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500 p-1 pb-10">
       {/* HEADER */}
       <div className="flex items-center gap-4 mb-2">
         <Link href="/">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" className="hover:bg-slate-100">
+            <ArrowLeft className="w-5 h-5 text-slate-700" />
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             Forecast & Analytics
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-slate-500 text-sm">
             Smart parking predictions for pilgrims
           </p>
         </div>
       </div>
 
-      {/* TOMORROW CARD */}
-      <Card className="bg-gradient-to-br from-primary to-blue-600 text-white border-none shadow-lg">
-        <CardContent className="pt-6">
-          <div className="flex justify-between items-start">
+      {/* 1. TOMORROW CARD (Hero - Original Layout Style) */}
+      <Card className={`border-none shadow-lg text-white bg-gradient-to-br ${getGradient(tomorrowProbability)} overflow-hidden relative`}>
+        <div className="absolute right-0 top-0 h-full w-1/2 bg-white/5 skew-x-12 transform origin-bottom-right" />
+        <CardContent className="pt-8 pb-8 relative z-10">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div>
-              <div className="flex items-center gap-2 text-blue-100 mb-2">
+              <div className="flex items-center gap-2 text-white/90 mb-2">
                 <Calendar className="w-4 h-4" />
-                <span className="text-sm font-medium uppercase tracking-wider">
-                  Tomorrow's Outlook
-                </span>
+                <span className="text-sm font-bold uppercase tracking-wider">Tomorrow's Outlook</span>
               </div>
 
-              <h2 className="text-4xl font-bold mb-1">
-                {tomorrowProbability}% Probability
-              </h2>
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-5xl font-extrabold tracking-tight">
+                  {tomorrowProbability}%
+                </h2>
+                <span className="text-xl font-medium text-white/80">Probability</span>
+              </div>
 
-              <p className="text-blue-100">
-  {tomorrowProbability > 70
-    ? "High congestion expected"
-    : tomorrowProbability > 40
-    ? "Moderate traffic expected"
-    : "Low congestion expected"}
-</p>
+              <p className="text-white/90 font-medium mt-1 text-lg flex items-center gap-2">
+                {statusText}
+              </p>
             </div>
 
-            <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
-              <TrendingUp className="w-6 h-6 text-white" />
+            <div className="h-16 w-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center border border-white/30 shadow-inner">
+              <TrendingUp className="w-8 h-8 text-white" />
             </div>
           </div>
 
-          {/* Decorative Area Chart */}
-          <div className="h-[120px] mt-6">
+          {/* Decorative Chart Area (Restored & Improved) */}
+          <div className="h-[100px] mt-6 -mx-6 -mb-8">
             <ResponsiveContainer width="100%" height="100%">
-             <AreaChart data={hourlyData}>
-  <defs>
-    <linearGradient id="probFill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="5%" stopColor="#ffffff" stopOpacity={0.35} />
-      <stop offset="95%" stopColor="#ffffff" stopOpacity={0} />
-    </linearGradient>
-  </defs>
-
-  <XAxis dataKey="time" hide />
-  <YAxis hide />
-
-  <Area
-    type="monotone"
-    dataKey="probability"
-    stroke="#fff"
-    strokeWidth={2}
-    fill="url(#probFill)"
-    activeDot={{ r: 4, fill: "#fff" }}
-  />
-</AreaChart>
-
+              <AreaChart data={hourlyData}>
+                <defs>
+                  <linearGradient id="heroChartFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ffffff" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="probability"
+                  stroke="#ffffff"
+                  strokeWidth={2}
+                  fill="url(#heroChartFill)"
+                />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
 
-      {/* PAST 7 DAYS */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Past 7 Days Trend</CardTitle>
+      {/* 2. PAST 7 DAYS (Original Layout Position) */}
+      <Card className="shadow-sm border-slate-200">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg text-slate-800">Past 7 Days Trend</CardTitle>
+              <CardDescription>Historical occupancy analysis</CardDescription>
+            </div>
+            <Info className="w-4 h-4 text-slate-400" />
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="h-[200px]">
+          <div className="h-[220px] w-full mt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklyData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="day" />
+              <BarChart data={weeklyData} barSize={32}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis
+                  dataKey="day"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#64748b', fontSize: 12, fontWeight: 500 }}
+                  dy={10}
+                />
                 <YAxis hide />
-                <Tooltip />
+                <Tooltip
+                  cursor={{ fill: '#f8fafc' }}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                />
                 <Bar
                   dataKey="occupancy"
-                  fill="hsl(var(--primary))"
-                  radius={[4, 4, 0, 0]}
+                  fill="#334155"
+                  radius={[6, 6, 0, 0]}
+                  activeBar={{ fill: '#0f172a' }}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -187,35 +213,43 @@ export default function Predictions() {
         </CardContent>
       </Card>
 
-      {/* ZONE WISE */}
+      {/* 3. ZONE WISE PREDICTIONS (Original Layout Grid) */}
       <div>
-        <h3 className="font-semibold mb-4 ml-1">
-          Zone-wise Probability (Tomorrow)
+        <h3 className="font-bold text-slate-800 mb-4 ml-1 flex items-center gap-2">
+          Zone Analysis <span className="text-slate-400 text-sm font-normal">(Tomorrow)</span>
         </h3>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {sortedZones.map((zone) => (
-            <div
-              key={zone.zone}
-              className="bg-card border p-3 rounded-lg flex justify-between items-center"
-            >
-              <span className="font-medium text-sm">{zone.zone}</span>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {sortedZones.map((zone) => {
+            // Calculate local status for color - BLUE THEME
+            let colorClass = "bg-blue-500"; // Changed to Blue
+            let bgClass = "bg-blue-50 text-blue-700 border-blue-100"; // Changed to Blue
 
-              <div
-                className={`text-sm font-bold px-2 py-0.5 rounded ${
-                  zone.probability > 85
-                    ? "bg-red-100 text-red-700"
-                    : zone.probability > 60
-                    ? "bg-yellow-100 text-yellow-700"
-                    : "bg-green-100 text-green-700"
-                }`}
-              >
-                {zone.probability}%
-              </div>
-            </div>
-          ))}
+            if (zone.probability > 75) { colorClass = "bg-red-500"; bgClass = "bg-red-50 text-red-700 border-red-100"; }
+            else if (zone.probability > 40) { colorClass = "bg-amber-500"; bgClass = "bg-amber-50 text-amber-700 border-amber-100"; }
+
+            return (
+              <Card key={zone.zone} className={`border shadow-sm hover:shadow-md transition-all ${bgClass}`}>
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="font-bold text-lg tracking-tight">{zone.zone}</span>
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full bg-white/60 backdrop-blur-sm`}>
+                      {zone.probability}%
+                    </span>
+                  </div>
+
+                  <Progress
+                    value={zone.probability}
+                    className="h-2 bg-white/50"
+                    indicatorClassName={colorClass}
+                  />
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </div>
+
     </div>
   );
 }

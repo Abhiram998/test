@@ -17,11 +17,22 @@ from db import get_db
 # =================================================================
 # ENVIRONMENT & INITIALIZATION
 # =================================================================
+import logging
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
-print("FastAPI booting (Railway-safe mode)")
-print("System: Nilakkal Parking Management")
+logger.info("FastAPI booting (Production Mode)")
+logger.info("System: Nilakkal Parking Management")
 
 # =================================================================
 # FASTAPI APP CONFIGURATION
@@ -35,7 +46,7 @@ app = FastAPI(
 # Enable CORS for frontend communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -611,12 +622,21 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
   
     search_term = q.strip().replace("-", "").replace(" ", "").upper()
     
+    # helper for specific timestamp formatting
+    def format_ts(ts):
+        if not ts: return None
+        val = ts.isoformat()
+        if not val.endswith("Z") and "+" not in val:
+            val += "Z"
+        return val
+
     # 1. Look for LIVE vehicle (Currently Inside)
     row = db.execute(text("""
         SELECT 
-            v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, z.zone_name, 'INSIDE' as current_status
+            v.vehicle_number AS vehicle, vt.type_name as type, pt.ticket_code, pt.entry_time, z.zone_name, 'INSIDE' as current_status
         FROM parking_tickets pt
         JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+        JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
         JOIN parking_zones z ON pt.zone_id = z.zone_id
         WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q 
           AND pt.exit_time IS NULL
@@ -627,9 +647,10 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
     if not row:
         row = db.execute(text("""
             SELECT 
-                v.vehicle_number AS vehicle, pt.ticket_code, pt.entry_time, pt.exit_time, z.zone_name, 'EXITED' as current_status
+                v.vehicle_number AS vehicle, vt.type_name as type, pt.ticket_code, pt.entry_time, pt.exit_time, z.zone_name, 'EXITED' as current_status
             FROM parking_tickets pt
             JOIN vehicles v ON pt.vehicle_id = v.vehicle_id
+            JOIN vehicle_types vt ON v.vehicle_type_id = vt.id
             JOIN parking_zones z ON pt.zone_id = z.zone_id
             WHERE REPLACE(REPLACE(UPPER(v.vehicle_number), '-', ''), ' ', '') LIKE :q 
             ORDER BY pt.exit_time DESC
@@ -643,10 +664,11 @@ def search_vehicle(q: str = Query(...), db: Session = Depends(get_db)):
         "vehicle": row["vehicle"],
         "ticketId": row["ticket_code"],
         "status": row["current_status"],
-        "entryTime": row["entry_time"].isoformat() if row["entry_time"] else None,
-        "exitTime": row.get("exit_time").isoformat() if row.get("exit_time") else None,
+        "type": row["type"].upper(),
+        "entryTime": format_ts(row["entry_time"]),
+        "exitTime": format_ts(row.get("exit_time")),
         "zone": row["zone_name"],
-        "message": "Vehicle is inside" if row["current_status"] == 'INSIDE' else f"Vehicle exited at {row['exit_time']}"
+        "message": "Vehicle is inside" if row["current_status"] == 'INSIDE' else f"Vehicle exited at {row.get('exit_time')}"
     }
 
 @app.post("/api/enter", tags=["Operations"])
@@ -862,14 +884,21 @@ def get_reports(
     query += " ORDER BY pt.entry_time DESC"
     rows = db.execute(text(query), params).mappings().all()
 
+    def format_ts(ts):
+        if not ts: return None
+        val = ts.isoformat()
+        if not val.endswith("Z") and "+" not in val:
+            val += "Z"
+        return val
+
     return [
         {
             "ticketId": r["ticketid"],
             "vehicle": r["vehicle"],
             "type": r["type"],
             "zone": r["zone"],
-            "entryTime": r["entrytime"].isoformat() if r["entrytime"] else None,
-            "exitTime": r["exittime"].isoformat() if r["exittime"] else None,
+            "entryTime": format_ts(r["entrytime"]),
+            "exitTime": format_ts(r["exittime"]),
             "status": "INSIDE" if r["exittime"] is None else "EXITED",
         }
         for r in rows
@@ -1022,7 +1051,16 @@ def get_snapshots(db: Session = Depends(get_db)):
         result = []
         for r in rows:
             item = dict(r)
-            if item["data"]:
+            
+            # Ensure timestamp is treated as UTC (Robust Fix)
+            if item.get("snapshot_time"):
+                ts = item["snapshot_time"]
+                val = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+                if not val.endswith("Z") and "+" not in val:
+                    val += "Z"
+                item["snapshot_time"] = val
+                
+            if item.get("data"):
                 item["data"] = json.loads(item["data"])
             result.append(item)
         return result
@@ -1076,20 +1114,23 @@ def restore_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
         # Reset Zone Counters
         db.execute(text("UPDATE parking_zones SET current_occupied = 0"))
         db.execute(text("UPDATE zone_type_limits SET current_count = 0"))
-
+        db.flush() # Ensure wipe is reflected before inserts
+        
         # 5. REACTIVATE ZONES (If snapshot contains vehicles in deleted zones)
         # We ensure all zones referred to in the snapshot are ACTIVE before continuing.
-        snapshot_zone_ids = list(set(v["zone"] for v in vehicles_to_restore))
+        snapshot_zone_ids = list(set(v["zone"] for v in vehicles_to_restore if v.get("zone")))
         if snapshot_zone_ids:
             print(f"Ensuring status=ACTIVE for snapshot zones: {snapshot_zone_ids}")
+            # Use IN instead of ANY for wider dialect compatibility
             db.execute(text("""
                 UPDATE parking_zones 
                 SET status = 'ACTIVE' 
-                WHERE zone_id = ANY(:ids)
-            """), {"ids": snapshot_zone_ids})
+                WHERE zone_id IN :ids
+            """), {"ids": tuple(snapshot_zone_ids)})
+            db.flush()
 
         # 6. RESTORE VEHICLES
-        print(f"Restoring {len(vehicles_to_restore)} vehicles...")
+        print(f"Restoring {len(vehicles_to_restore)} vehicles to database...")
         
         # Pre-fetch fallback zone and current active set with names for smart mapping
         active_zones_rows = db.execute(text("SELECT zone_id, zone_name FROM parking_zones WHERE status = 'ACTIVE'")).fetchall()
@@ -1098,90 +1139,111 @@ def restore_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
         fallback_zone_id = active_zones_rows[0].zone_id if active_zones_rows else None
         
         restored_count = 0
-        processed_ids = set() # Prevent duplicate entries using internal IDs
+        processed_v_ids = set() # Prevent duplicate entries using internal IDs
         
         for v in vehicles_to_restore:
-            # v = { "plate": "...", "zone": "...", "zone_name": "...", "timeIn": "...", "type": "..." }
-            
-            # A. Resolve Vehicle and Type
-            plate_cleaned = v["plate"].strip().upper()
-            
-            v_type_id = db.execute(text("SELECT id FROM vehicle_types WHERE type_name = :t"), 
-                                 {"t": v["type"]}).scalar()
-            
-            if not v_type_id:
-                v_type_id = db.execute(text("SELECT id FROM vehicle_types LIMIT 1")).scalar()
+            try:
+                # v = { "plate": "...", "zone": "...", "zone_name": "...", "timeIn": "...", "type": "..." }
+                
+                # A. Resolve Vehicle and Type
+                plate_cleaned = v["plate"].strip().upper()
+                v_type_str = v.get("type", "Light").capitalize()
+                
+                v_type_id = db.execute(text("SELECT id FROM vehicle_types WHERE type_name = :t"), 
+                                     {"t": v_type_str}).scalar() or 1 # Default to ID 1 if not found
+                
+                vehicle_id = db.execute(text("SELECT vehicle_id FROM vehicles WHERE vehicle_number = :n"), 
+                                      {"n": plate_cleaned}).scalar()
 
-            vehicle_id = db.execute(text("SELECT vehicle_id FROM vehicles WHERE vehicle_number = :n"), 
-                                  {"n": plate_cleaned}).scalar()
+                if not vehicle_id:
+                    vehicle_id = db.execute(text("""
+                        INSERT INTO vehicles (vehicle_number, vehicle_type_id) 
+                        VALUES (:n, :t) RETURNING vehicle_id
+                    """), {"n": plate_cleaned, "t": v_type_id}).scalar()
 
-            if not vehicle_id:
-                vehicle_id = db.execute(text("""
-                    INSERT INTO vehicles (vehicle_number, vehicle_type_id) 
-                    VALUES (:n, :t) RETURNING vehicle_id
-                """), {"n": plate_cleaned, "t": v_type_id}).scalar()
+                # B. ID-Based Deduplication (Final Safety)
+                if vehicle_id in processed_v_ids:
+                    print(f"Skipping duplicate vehicle {plate_cleaned} (ID: {vehicle_id}) in snapshot")
+                    continue
+                processed_v_ids.add(vehicle_id)
 
-            # B. ID-Based Deduplication (Final Safety)
-            if vehicle_id in processed_ids:
-                print(f"Skipping duplicate vehicle {plate_cleaned} (ID: {vehicle_id}) in snapshot")
+
+                # C. Smart Zone Mapping
+                # Priority 1: Map by Name (if available in snapshot)
+                # Priority 2: Map by ID (if active)
+                # Priority 3: Fallback
+                target_zone = None
+                snap_zone_name = v.get("zone_name")
+                snap_zone_id = v.get("zone")
+
+                if snap_zone_name and snap_zone_name in name_to_id:
+                    target_zone = name_to_id[snap_zone_name]
+                elif snap_zone_id in active_zone_ids:
+                    target_zone = snap_zone_id
+                
+                if not target_zone:
+                    print(f"Warning: Could not map vehicle {v['plate']} (Zone: {snap_zone_id}/{snap_zone_name}). Using fallback.")
+                    target_zone = fallback_zone_id
+
+                if not target_zone:
+                    print(f"Warning: No active zone found for vehicle {v['plate']}. Skipping.")
+                    continue # Hard failure: no zones active in system
+
+                # D. Insert Active Ticket (Force previous entry time)
+                ticket_code = f"RES-{int(datetime.now().timestamp())}-{restored_count}"
+                
+                db.execute(text("""
+                    INSERT INTO parking_tickets (ticket_code, vehicle_id, zone_id, entry_time, status)
+                    VALUES (:code, :vid, :zid, :time, 'RESTORED')
+                """), {
+                    "code": ticket_code,
+                    "vid": vehicle_id,
+                    "zid": target_zone,
+                    "time": v["timeIn"]
+                })
+
+                # D. Increment Counters
+                db.execute(text("""
+                    UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id = :z
+                """), {"z": target_zone})
+
+                db.execute(text("""
+                    UPDATE zone_type_limits 
+                    SET current_count = current_count + 1 
+                    WHERE zone_id = :z AND vehicle_type_id = :t
+                """), {"z": target_zone, "t": v_type_id})
+                db.flush() # Ensure counters are updated before next iteration
+
+                restored_count += 1
+            except Exception as inner_e:
+                print(f"Warning: Failed to restore vehicle {v.get('plate')}: {inner_e}")
                 continue
-            processed_ids.add(vehicle_id)
-
-
-            # C. Smart Zone Mapping
-            # Priority 1: Map by Name (if available in snapshot)
-            # Priority 2: Map by ID (if active)
-            # Priority 3: Fallback
-            target_zone = None
-            snap_zone_name = v.get("zone_name")
-            snap_zone_id = v.get("zone")
-
-            if snap_zone_name and snap_zone_name in name_to_id:
-                target_zone = name_to_id[snap_zone_name]
-            elif snap_zone_id in active_zone_ids:
-                target_zone = snap_zone_id
-            
-            if not target_zone:
-                print(f"Warning: Could not map vehicle {v['plate']} (Zone: {snap_zone_id}/{snap_zone_name}). Using fallback.")
-                target_zone = fallback_zone_id
-
-            if not target_zone:
-                continue # Hard failure: no zones active in system
-
-            # D. Insert Active Ticket (Force previous entry time)
-            ticket_code = f"RES-{int(datetime.now().timestamp())}-{restored_count}"
-            
-            db.execute(text("""
-                INSERT INTO parking_tickets (ticket_code, vehicle_id, zone_id, entry_time, status)
-                VALUES (:code, :vid, :zid, :time, 'RESTORED')
-            """), {
-                "code": ticket_code,
-                "vid": vehicle_id,
-                "zid": target_zone,
-                "time": v["timeIn"]
-            })
-
-            # D. Increment Counters
-            db.execute(text("""
-                UPDATE parking_zones SET current_occupied = current_occupied + 1 WHERE zone_id = :z
-            """), {"z": target_zone})
-
-            db.execute(text("""
-                UPDATE zone_type_limits 
-                SET current_count = current_count + 1 
-                WHERE zone_id = :z AND vehicle_type_id = :t
-            """), {"z": target_zone, "t": v_type_id})
-
-            restored_count += 1
 
         db.commit()
-        print(f"Restore Complete. {restored_count} vehicles active.")
+        print(f"Restore Successful. {restored_count} vehicles operational.")
         return {"success": True, "message": f"Restored {restored_count} vehicles from snapshot #{snapshot_id}"}
 
     except Exception as e:
         db.rollback()
         print(f"Restore Failed: {str(e)}")
         raise HTTPException(500, f"Restore failed: {str(e)}")
+
+@app.delete("/api/snapshots/{snapshot_id}", tags=["Diagnostics"])
+def delete_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
+    """Permanently deletes a snapshot from the server."""
+    try:
+        result = db.execute(text("DELETE FROM snapshots WHERE id = :id"), {"id": snapshot_id})
+        db.commit()
+        
+        if result.rowcount == 0:
+            raise HTTPException(404, "Snapshot not found")
+            
+        return {"success": True, "message": f"Snapshot #{snapshot_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, str(e))
 
 # =================================================================
 # STATIC FRONTEND DELIVERY (SPA SUPPORT)

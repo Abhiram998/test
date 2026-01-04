@@ -10,6 +10,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useState } from "react";
 
 export function ZoneCard({
@@ -57,10 +63,10 @@ export function ZoneCard({
     >
       {/* HEADER */}
       <div className="flex justify-between items-center mb-1">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <div
             className={cn(
-              "h-5 w-5 rounded-md flex items-center justify-center text-[10px] font-bold border",
+              "h-5 w-5 flex-shrink-0 rounded-md flex items-center justify-center text-[10px] font-bold border",
               isFull
                 ? "bg-red-500 text-white border-red-200"
                 : "bg-primary/10 text-primary border-primary/10"
@@ -70,19 +76,28 @@ export function ZoneCard({
             {displayIndex !== undefined ? `Z${displayIndex}` : zone.id}
           </div>
 
-          <h3 className="font-bold text-xs text-foreground whitespace-nowrap">
-            {zone.name.replace("Nilakkal Parking Zone ", "Parking Zone ")}
-          </h3>
+          <TooltipProvider>
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <h3 className="font-bold text-xs text-foreground truncate cursor-default max-w-full">
+                  {zone.name.replace("Nilakkal Parking Zone ", "Parking Zone ")}
+                </h3>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs font-bold">
+                {zone.name}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         <span
           className={cn(
-            "text-[9px] font-bold px-1 py-0 rounded-full border",
+            "text-[9px] font-bold px-1 py-0 rounded-full border flex-shrink-0 ml-1",
             isFull
               ? "bg-red-100 text-red-700 border-red-200"
               : isNearFull
-              ? "bg-orange-100 text-orange-700 border-orange-200"
-              : "bg-green-100 text-green-700 border-green-200"
+                ? "bg-orange-100 text-orange-700 border-orange-200"
+                : "bg-green-100 text-green-700 border-green-200"
           )}
         >
           {isFull ? "FULL" : isNearFull ? "FAST" : "OPEN"}
@@ -135,13 +150,12 @@ export function ZoneCard({
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${
-                        v.type === "heavy"
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-white ${v.type === "heavy"
                           ? "bg-red-500"
                           : v.type === "medium"
-                          ? "bg-amber-500"
-                          : "bg-primary"
-                      }`}
+                            ? "bg-amber-500"
+                            : "bg-primary"
+                        }`}
                     >
                       {getVehicleIcon(v.type)}
                     </div>

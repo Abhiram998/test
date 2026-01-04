@@ -1,0 +1,19 @@
+﻿
+--- TABLES LIST ---
+parked_tickets
+zone_capacity_history
+zones
+system_state
+vehicles
+users
+parking_snapshots
+snapshots
+officers
+zone_type_limits
+vehicle_types
+parking_zones
+parking_tickets
+admin_officers
+parking_slots
+occupancy_predictions
+activity_logs
